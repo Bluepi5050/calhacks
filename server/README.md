@@ -60,3 +60,14 @@ Fixes a privacy bug: `shopper_login` maps a phone identity to its *current* acco
 - `account_delete` removes the account's ownership rows; the receipts stay with the store.
 - Still public by the console contract: `shop_order`, `order_line`, `cart_item`, `bag_event`, `shopper` (keyed by phone identity). The apps never show another account's trips, but someone reading those public tables directly can still see every order made on a phone identity.
 - Published with `--delete-data=never`. Regression test: `tests/ownership.test.mjs` (live; uses its own throwaway store and new accounts, cleans up after itself).
+
+
+## v6: SmartCart hardware sessions (2026-10-24)
+
+Contract: [docs/SMARTCART-BLE.md](docs/SMARTCART-BLE.md) (sections 4-5). Additive only (4 new tables, published with `--delete-data=never`).
+
+- Sessions: `shop_locate` opens a session (`s` + base36 id) when the phone enters a store; the walk-out transaction completes it (linked to the order); it is abandoned when the store membership ends otherwise (store deleted, reset, idle cleanup).
+- Procedures: `shop_session_state`, `shop_hw_event(sessionId, seq, action, label, confidence)` (idempotent by `<sid>:<seq>`; statuses accepted, duplicate, unknown_product, invalid_remove, stale_session, no_session, plus rejected for malformed events), `shop_set_budget`, `shop_set_qty`, `shop_relabel`, `shop_recommend` (OpenAI-compatible endpoint when `set_ai_config` is set, else rules), `shop_summary`, `shop_store_products`, `shop_session_rekey` (cart restarted while on a visit).
+- Labels: public `product_label`; `set_product_label` (staff), `seed_product_labels` (staff for a store, admin for all with `''`). Seeds apple, banana, orange, bottle, carrot, broccoli; adds Oranges, Carrots, Broccoli where missing. After publishing to an existing database run `seed_product_labels ''` as admin (init does not run on republish).
+- AI: `set_ai_config(url, apiKey, model)` (admin; `url` = base URL or `.../chat/completions`; `''` turns it off). Not configured by default.
+- Test: `tests/hw_session.test.mjs` (live, throwaway store and identities, self-cleaning): 55/55.

@@ -1,5 +1,5 @@
 import { schema, table, t, SenderError, type InferSchema, type ReducerCtx } from 'spacetimedb/server';
-import { ScheduleAt } from 'spacetimedb';
+import { ScheduleAt, TimeDuration } from 'spacetimedb';
 import { sha256, googleJwt } from './push_crypto';
 
 // SmartBag v3: built to scale to thousands of stores and shoppers.
@@ -234,11 +234,47 @@ const cartSession = table({ name: 'cart_session' }, {
   startedAt: t.timestamp(),
 });
 
+// ── SmartCart hardware sessions (v6, additive; contract docs/SMARTCART-BLE.md sections 4-5) ──
+// A session is one store visit of one phone: opened in the shop_locate transaction that puts the phone in a store,
+// completed in the walk-out transaction (linked to the order), abandoned if the store membership ends otherwise.
+// The Jetson tags its events with the session id; events of a session that is not the phone's active one never
+// touch the cart.
+const shopSession = table({ name: 'shop_session' }, {     // private
+  id: t.u64().primaryKey().autoInc(),
+  sid: t.string().unique(),               // 's' + base36(id): what the phone writes in START|sid|store
+  identity: t.identity().index('btree'),
+  storeId: t.string(),
+  status: t.string().index('btree'),      // 'active' | 'completed' | 'abandoned'
+  startedAt: t.timestamp(),
+  endedMicros: t.i64(),                   // 0 while active
+  orderId: t.u64().index('btree'),        // the walk-out order (0 = none: abandoned, or nothing to charge)
+  lastSeq: t.u64(),
+  eventCount: t.u32(),                    // hardware events processed (duplicates not counted)
+  budgetCents: t.u32(),                   // the shopper's budget when the session ended
+});
+// Processed hardware events, '<sid>:<seq>' (idempotency). Removed when the session ends.
+const hwEventSeen = table({ name: 'hw_event_seen' }, {  // private
+  key: t.string().primaryKey(),
+  sessionId: t.u64().index('btree'),
+});
+// Spending budget: 'a:<accountId>' when signed in, else 'i:<identity hex>'. Carries over to later trips.
+const shopperBudget = table({ name: 'shopper_budget' }, {   // private
+  key: t.string().primaryKey(),
+  cents: t.u32(),
+  updatedAt: t.timestamp(),
+});
+// Camera label -> store SKU (public: the console and the phones may read it). Staff edit it with set_product_label.
+const productLabel = table(
+  { name: 'product_label', public: true, indexes: [{ accessor: 'by_store_label', algorithm: 'btree', columns: ['storeId', 'label'] }] },
+  { id: t.u64().primaryKey().autoInc(), storeId: t.string(), label: t.string(), sku: t.string() }
+);
+
 const spacetimedb = schema({
   store, product, shopper, cartItem, shopOrder, orderLine, bagEvent, operator, config, storeStaff, storeInvite, cleanupTimer,
   account, profile, staffEmailInvite, activity, storeOwner, memberName,
   shopperAccount, shopperLogin, paymentCard, pairedBag, pushDevice,
   orderOwner, cartSession,
+  shopSession, hwEventSeen, shopperBudget, productLabel,
 });
 export default spacetimedb;
 
@@ -429,8 +465,12 @@ function removeStore(ctx: Ctx, id: string) {
   ctx.db.storeInvite.storeId.delete(id);
   for (const o of [...ctx.db.storeOwner.storeId.filter(id)]) ctx.db.storeOwner.id.delete(o.id);
   for (const c of [...ctx.db.cartItem.storeId.filter(id)]) ctx.db.cartItem.id.delete(c.id);
-  for (const sh of [...ctx.db.shopper.storeId.filter(id)]) ctx.db.shopper.identity.update({ ...sh, storeId: '', storeName: '', storeAddress: '', outsideFixes: 0 });
+  for (const sh of [...ctx.db.shopper.storeId.filter(id)]) {
+    ctx.db.shopper.identity.update({ ...sh, storeId: '', storeName: '', storeAddress: '', outsideFixes: 0 });
+    abandonSessionOf(ctx, sh.identity);
+  }
   for (const i of [...ctx.db.staffEmailInvite.storeId.filter(id)]) ctx.db.staffEmailInvite.id.delete(i.id);
+  for (const l of [...ctx.db.productLabel.by_store_label.filter(id)]) ctx.db.productLabel.id.delete(l.id);
   ctx.db.store.id.delete(id);
 }
 
@@ -487,11 +527,19 @@ function doLocate(ctx: Ctx, lat: number, lng: number, accuracyM: number) {
   if (row.storeId !== newStore) {
     for (const c of [...ctx.db.cartItem.by_shopper_sku.filter(ctx.sender)]) ctx.db.cartItem.id.update({ ...c, storeId: newStore });
   }
+  syncSession(ctx);      // v6: entering a store opens a hardware session in this same transaction
 }
 
 // The shopper walked out of `st` with their bag: price it at this store, charge the saved payment
 // method, record the order and empty the bag. Items the store does not sell are not charged.
 function walkOut(ctx: Ctx, st: { id: string; name: string }) {
+  const order = walkOutCharge(ctx, st);
+  // v6: the store visit's hardware session completes in the walk-out transaction, linked to the order.
+  const sess = activeSessionOf(ctx, ctx.sender);
+  if (sess) endSession(ctx, sess, 'completed', order ? order.id : 0n);
+  return order;
+}
+function walkOutCharge(ctx: Ctx, st: { id: string; name: string }) {
   const row = ctx.db.shopper.identity.find(ctx.sender)!;
   const items = [...ctx.db.cartItem.by_shopper_sku.filter(ctx.sender)];
   ctx.db.shopper.identity.update({ ...row, storeId: '', storeName: '', storeAddress: '', outsideFixes: 0 });
@@ -740,10 +788,12 @@ function setup(ctx: Ctx) {
   if (!ctx.db.store.id.find('bayside-grocer')) {
     createStore(ctx, 'bayside-grocer', 'Bayside Grocer', 'Market St, San Francisco', 37.7897, -122.3972, 150);
     addCatalog(ctx, 'bayside-grocer', {}, []);
+    seedLabels(ctx, 'bayside-grocer');
   }
   if (!ctx.db.store.id.find('mission-fresh')) {
     createStore(ctx, 'mission-fresh', 'Mission Fresh Market', 'Valencia St, San Francisco', 37.7599, -122.4214, 150);
     addCatalog(ctx, 'mission-fresh', { '1001': 20, '1002': -30, '1005': 60, '1008': -50, '1010': -100, '1016': 30 }, ['1009', '1011']);
+    seedLabels(ctx, 'mission-fresh');
   }
   ensureCleanup(ctx);
 }
@@ -763,8 +813,9 @@ export const cleanup = spacetimedb.reducer({ onSchedule: cleanupTimer }, { timer
     if (now - s.updatedAt.microsSinceUnixEpoch < IDLE_SHOPPER_MICROS) continue;
     let hasCart = false;
     for (const _c of ctx.db.cartItem.by_shopper_sku.filter(s.identity)) { hasCart = true; break; }
-    if (!hasCart) { ctx.db.shopper.identity.delete(s.identity); ctx.db.cartSession.identity.delete(s.identity); }
+    if (!hasCart) { ctx.db.shopper.identity.delete(s.identity); ctx.db.cartSession.identity.delete(s.identity); ctx.db.shopperBudget.key.delete('i:' + s.identity.toHexString()); }
   }
+  sweepSessions(ctx, now);
 });
 
 // ───────────────────────── Store staff & admin ─────────────────────────
@@ -799,6 +850,7 @@ export const pinStore = spacetimedb.reducer({ name: t.string(), lat: t.f64(), ln
   while (ctx.db.store.id.find(id)) id = 'store-' + randomCode(ctx, 6).toLowerCase();
   createStore(ctx, id, name || 'Demo Market', 'Pinned from the console', lat, lng, 150);
   addCatalog(ctx, id, {}, []);
+  seedLabels(ctx, id);
   if (!isAdmin(ctx)) ctx.db.storeStaff.insert({ id: 0n, identity: ctx.sender, storeId: id });
   ctx.db.storeOwner.insert({ id: 0n, storeId: id, identity: ctx.sender });
   logActivity(ctx, id, 'opened the store');
@@ -860,7 +912,7 @@ export const resetDemo = spacetimedb.reducer({ storeId: t.string() }, (ctx, { st
   for (const r of [...(storeId ? ctx.db.bagEvent.storeId.filter(storeId) : ctx.db.bagEvent.iter())]) ctx.db.bagEvent.id.delete(r.id);
   for (const r of [...ctx.db.orderLine.iter()]) if (match(r.storeId)) ctx.db.orderLine.id.delete(r.id);
   for (const r of [...ctx.db.shopOrder.iter()]) if (match(r.storeId)) { ctx.db.orderOwner.orderId.delete(r.id); ctx.db.shopOrder.id.delete(r.id); }
-  for (const r of [...(storeId ? ctx.db.shopper.storeId.filter(storeId) : ctx.db.shopper.iter())]) ctx.db.shopper.identity.delete(r.identity);
+  for (const r of [...(storeId ? ctx.db.shopper.storeId.filter(storeId) : ctx.db.shopper.iter())]) { abandonSessionOf(ctx, r.identity); ctx.db.shopper.identity.delete(r.identity); }
   if (storeId) logActivity(ctx, storeId, 'reset the demo data');
 });
 
@@ -875,6 +927,7 @@ export const seedLoadTest = spacetimedb.reducer({ start: t.u32(), count: t.u32()
     const lng = a.lng + ((k % side) - side / 2) * 0.006;
     createStore(ctx, id, 'Load Test Market ' + k, 'Synthetic', lat, lng, 150);
     addCatalog(ctx, id, {}, []);
+    seedLabels(ctx, id);
   }
 });
 export const clearLoadTest = spacetimedb.reducer({ count: t.u32() }, (ctx, { count }) => {
@@ -1271,6 +1324,7 @@ function doDeleteAccount(ctx: Ctx, password: string): string {
   for (const b of [...ctx.db.pairedBag.accountId.filter(acct.id)]) ctx.db.pairedBag.id.delete(b.id);
   // Receipts stay with the store (shop_order); only the private link from them to this person is removed.
   for (const o of [...ctx.db.orderOwner.accountId.filter(acct.id)]) ctx.db.orderOwner.orderId.delete(o.orderId);
+  ctx.db.shopperBudget.key.delete('a:' + acct.id);
   ctx.db.shopperAccount.id.delete(acct.id);
   return '';
 }
@@ -1544,4 +1598,464 @@ export const shopNearbyStores = spacetimedb.procedure({ lat: t.f64(), lng: t.f64
       out.push({ id: s.id, name: s.name, address: s.address, lat: s.lat, lng: s.lng, radiusM: s.radiusM, distanceM: Math.round(haversine(a.lat, a.lng, s.lat, s.lng)) });
   out.sort((x, y) => x.distanceM - y.distanceM);
   return out.slice(0, Math.max(1, Math.min(a.limit || 20, 50)));
+}));
+
+
+// ───────────────────────── SmartCart hardware sessions, budget, recommendations, summary (v6) ─────────────────────────
+// Contract: docs/SMARTCART-BLE.md sections 4 and 5. Additive: no existing table, procedure or return type changed.
+
+const SESSION_TTL_MICROS = 30n * 86_400_000_000n;   // finished sessions kept 30 days (trip summaries use them)
+const MAX_SEQ = 999_999n;
+const MAX_BUDGET_CENTS = 10_000_000;                // $100,000
+
+function activeSessionOf(ctx: Ctx, who: any) {
+  for (const s of ctx.db.shopSession.identity.filter(who)) if (s.status === 'active') return s;
+  return null;
+}
+type SessionRow = NonNullable<ReturnType<typeof activeSessionOf>>;
+function budgetKey(ctx: Ctx, who: any) {
+  const p = principalOf(ctx, who);
+  return p ? 'a:' + p : 'i:' + who.toHexString();
+}
+function budgetOf(ctx: Ctx, who: any): number {
+  const b = ctx.db.shopperBudget.key.find(budgetKey(ctx, who));
+  return b ? b.cents : 0;
+}
+function openSession(ctx: Ctx, who: any, storeId: string) {
+  const row = ctx.db.shopSession.insert({ id: 0n, sid: 'tmp:' + who.toHexString(), identity: who, storeId, status: 'active',
+    startedAt: ctx.timestamp, endedMicros: 0n, orderId: 0n, lastSeq: 0n, eventCount: 0, budgetCents: 0 });
+  const sid = 's' + row.id.toString(36);
+  ctx.db.shopSession.id.update({ ...row, sid });
+  return { ...row, sid };
+}
+function endSession(ctx: Ctx, s: SessionRow, status: 'completed' | 'abandoned', orderId: bigint) {
+  for (const e of [...ctx.db.hwEventSeen.sessionId.filter(s.id)]) ctx.db.hwEventSeen.key.delete(e.key);
+  ctx.db.shopSession.id.update({ ...s, status, orderId, endedMicros: ctx.timestamp.microsSinceUnixEpoch, budgetCents: budgetOf(ctx, s.identity) });
+}
+function abandonSessionOf(ctx: Ctx, who: any) {
+  const s = activeSessionOf(ctx, who);
+  if (s) endSession(ctx, s, 'abandoned', 0n);
+}
+// The caller's session must match its store membership: one active session exactly while it is in a store.
+function syncSession(ctx: Ctx) {
+  const row = ctx.db.shopper.identity.find(ctx.sender);
+  const storeId = row ? row.storeId : '';
+  let act = activeSessionOf(ctx, ctx.sender);
+  if (act && act.storeId !== storeId) { endSession(ctx, act, 'abandoned', 0n); act = null; }
+  if (!act && storeId) openSession(ctx, ctx.sender, storeId);
+}
+// Scheduled: end sessions whose phone is no longer in that store (shopper dropped, store removed), prune old ones.
+function sweepSessions(ctx: Ctx, now: bigint) {
+  for (const s of [...ctx.db.shopSession.status.filter('active')]) {
+    const sh = ctx.db.shopper.identity.find(s.identity);
+    if (!sh || sh.storeId !== s.storeId) endSession(ctx, s, 'abandoned', 0n);
+  }
+  for (const s of [...ctx.db.shopSession.iter()]) {
+    if (s.status !== 'active' && now - s.endedMicros > SESSION_TTL_MICROS) {
+      for (const e of [...ctx.db.hwEventSeen.sessionId.filter(s.id)]) ctx.db.hwEventSeen.key.delete(e.key);
+      ctx.db.shopSession.id.delete(s.id);
+    }
+  }
+}
+
+// ── Labels ──
+function normLabel(raw: string) { return raw.trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 20); }
+function labelSku(ctx: Ctx, storeId: string, label: string): string {
+  for (const l of ctx.db.productLabel.by_store_label.filter([storeId, label])) return l.sku;
+  return '';
+}
+function putLabel(ctx: Ctx, storeId: string, label: string, sku: string) {
+  let cur = null as null | { id: bigint; storeId: string; label: string; sku: string };
+  for (const l of ctx.db.productLabel.by_store_label.filter([storeId, label])) { cur = l; break; }
+  if (!sku) { if (cur) ctx.db.productLabel.id.delete(cur.id); return; }
+  if (cur) { if (cur.sku !== sku) ctx.db.productLabel.id.update({ ...cur, sku }); }
+  else ctx.db.productLabel.insert({ id: 0n, storeId, label, sku });
+}
+// Default camera labels = the COCO classes in the teammate's data/detectable_products.json: apple, banana, orange,
+// bottle, carrot, broccoli. Products the catalog lacks (Oranges, Carrots, Broccoli) are added, priced like the store's
+// other produce (offset by how this store prices bananas against the standard catalog). Never overwrites a mapping
+// staff already set, never adds a product twice.
+const EXTRA_PRODUCE: Array<[string, string, RegExp, number, string]> = [
+  ['1017', 'Oranges', /orange/, 99, 'each'],
+  ['1018', 'Carrots', /carrot/, 149, '1 lb bag'],
+  ['1019', 'Broccoli', /broccoli/, 249, 'bunch'],
+];
+function seedLabels(ctx: Ctx, storeId: string): number {
+  const products = [...ctx.db.product.by_store_sku.filter(storeId)];
+  if (!products.length) return 0;
+  const byName = (re: RegExp) => products.find((p) => re.test(p.name.toLowerCase()));
+  const bySku = (sku: string) => products.find((p) => p.sku === sku);
+  const banana = bySku('1001') || byName(/banana/);
+  const offset = banana ? banana.priceCents - 129 : 0;
+  const extra: Record<string, any> = {};
+  for (const [pref, name, re, base, unit] of EXTRA_PRODUCE) {
+    let p: any = byName(re);
+    if (!p) {
+      let n = Number(pref);
+      while (bySku(String(n))) n++;
+      p = ctx.db.product.insert({ id: 0n, storeId, sku: String(n), name, priceCents: Math.max(49, base + offset), unit });
+      products.push(p);
+    }
+    extra[name] = p;
+  }
+  const want: Array<[string, any]> = [
+    ['apple', bySku('1003') || byName(/apple/)],
+    ['banana', banana],
+    ['orange', extra['Oranges']],
+    ['bottle', bySku('1010') || byName(/water|bottle|soda|juice/)],
+    ['carrot', extra['Carrots']],
+    ['broccoli', extra['Broccoli']],
+  ];
+  let n = 0;
+  for (const [label, p] of want) {
+    if (!p || labelSku(ctx, storeId, label)) continue;
+    putLabel(ctx, storeId, label, p.sku); n++;
+  }
+  return n;
+}
+
+export const setProductLabel = spacetimedb.reducer({ storeId: t.string(), label: t.string(), sku: t.string() }, (ctx, a) => {
+  requireStaff(ctx, a.storeId);
+  if (!ctx.db.store.id.find(a.storeId)) throw new SenderError('No such store.');
+  const label = normLabel(a.label);
+  if (!label || label.includes('|')) throw new SenderError('Enter the camera label, for example apple.');
+  const sku = a.sku.trim();
+  if (sku && !findProduct(ctx, a.storeId, sku)) throw new SenderError('This store has no product with SKU ' + sku.slice(0, 40) + '.');
+  const before = labelSku(ctx, a.storeId, label);
+  putLabel(ctx, a.storeId, label, sku);
+  if (before !== sku) {
+    const p = sku ? findProduct(ctx, a.storeId, sku) : null;
+    logActivity(ctx, a.storeId, sku ? 'mapped camera label ' + label + ' to ' + (p ? p.name : sku) : 'removed camera label ' + label);
+  }
+});
+// Seeds the default labels for one store (staff) or every store (admin, storeId ''). Safe to run again.
+export const seedProductLabels = spacetimedb.reducer({ storeId: t.string() }, (ctx, { storeId }) => {
+  if (storeId) { requireStaff(ctx, storeId); seedLabels(ctx, storeId); return; }
+  requireAdmin(ctx);
+  for (const st of [...ctx.db.store.iter()]) seedLabels(ctx, st.id);
+});
+
+// ── Cart helpers shared by the hardware path and the manual corrections ──
+function startCartIfEmpty(ctx: Ctx) {
+  if (hasCart(ctx, ctx.sender)) return;
+  const sess = { identity: ctx.sender, accountId: principalOf(ctx, ctx.sender), startedAt: ctx.timestamp };
+  if (ctx.db.cartSession.identity.find(ctx.sender)) ctx.db.cartSession.identity.update(sess); else ctx.db.cartSession.insert(sess);
+}
+function cartAdd(ctx: Ctx, storeId: string, sku: string, qty: number) {
+  startCartIfEmpty(ctx);
+  const cur = findCartLine(ctx, sku);
+  if (cur) ctx.db.cartItem.id.update({ ...cur, qty: Math.min(999, cur.qty + qty), storeId });
+  else ctx.db.cartItem.insert({ id: 0n, shopper: ctx.sender, storeId, sku, qty: Math.min(999, qty), tags: '', addedAt: ctx.timestamp });
+}
+function cartTake(ctx: Ctx, sku: string, qty: number): boolean {
+  const cur = findCartLine(ctx, sku);
+  if (!cur || cur.qty === 0) return false;
+  if (cur.qty <= qty) ctx.db.cartItem.id.delete(cur.id);
+  else {
+    const tags = cur.tags ? cur.tags.split(',') : [];
+    tags.splice(0, qty);
+    ctx.db.cartItem.id.update({ ...cur, qty: cur.qty - qty, tags: tags.join(',') });
+  }
+  return true;
+}
+// Cart key for a camera label the store doesn't map: the label itself (an unpriced "not sold here" line), never
+// colliding with a real SKU of this store.
+function unknownKey(ctx: Ctx, storeId: string, label: string) {
+  const k = label.replace(/\s+/g, '-');
+  return findProduct(ctx, storeId, k) ? 'x-' + k : k;
+}
+
+// ── Return types (BSATN field order = the contract's order) ──
+const SessionState = t.object('SessionState', {
+  sessionId: t.string(), storeId: t.string(), storeName: t.string(), active: t.bool(), lastSeq: t.u64(),
+  budgetCents: t.u32(), spentCents: t.u32(), remainingCents: t.i64(), cart: CartState,
+});
+const HwEventResult = t.object('HwEventResult', { status: t.string(), message: t.string(), state: SessionState });
+const Recommendation = t.object('Recommendation', { sku: t.string(), name: t.string(), priceCents: t.u32(), reason: t.string() });
+const Recommendations = t.object('Recommendations', { source: t.string(), note: t.string(), items: t.array(Recommendation) });
+const TripSummary = t.object('TripSummary', {
+  receipt: Receipt, sessionId: t.string(), startedMicros: t.i64(), endedMicros: t.i64(), eventCount: t.u32(),
+  budgetCents: t.u32(), underBudgetCents: t.i64(), text: t.string(),
+});
+
+// sessionId '' (active false) when the phone is not on a store visit. remainingCents = budget - priced total
+// (negative = over budget); 0 when no budget is set.
+function sessionState(ctx: Ctx) {
+  const cart = cartState(ctx);
+  const act = activeSessionOf(ctx, ctx.sender);
+  const budget = budgetOf(ctx, ctx.sender);
+  const st = act ? ctx.db.store.id.find(act.storeId) : null;
+  return {
+    sessionId: act ? act.sid : '', storeId: act ? act.storeId : cart.storeId, storeName: st ? st.name : cart.storeName,
+    active: !!act, lastSeq: act ? act.lastSeq : 0n, budgetCents: budget, spentCents: cart.totalCents,
+    remainingCents: budget ? BigInt(budget) - BigInt(cart.totalCents) : 0n, cart,
+  };
+}
+
+const cap = (x: string) => (x ? x[0].toUpperCase() + x.slice(1) : x);
+function doHwEvent(ctx: Ctx, sid: string, seq: bigint, actionIn: string, labelIn: string, confIn: number) {
+  const action = actionIn.trim().toUpperCase();
+  const label = normLabel(labelIn);
+  const conf = Math.min(100, Math.floor(confIn));
+  const line = (action.slice(0, 3) + ' ' + label + ' ' + conf + '% #' + seq).slice(0, 80);
+  const res = (status: string, message: string) => ({ status, message, state: sessionState(ctx) });
+  // Malformed events get a terminal status (the phone acks it) instead of an error that would block its queue.
+  if ((action !== 'A' && action !== 'R') || seq < 1n || seq > MAX_SEQ || !label || label.includes('|')) {
+    const row = ctx.db.shopper.identity.find(ctx.sender);
+    logBag(ctx, row ? row.storeId : '', line, 'unreadable, ignored');
+    return res('rejected', 'Bag It couldn’t read that event.');
+  }
+  const sess = sid ? ctx.db.shopSession.sid.find(sid.trim().slice(0, 12)) : null;
+  const mine = !!sess && sess.identity.toHexString() === ctx.sender.toHexString();
+  if (!sess || !mine) {
+    const row = ctx.db.shopper.identity.find(ctx.sender);
+    logBag(ctx, row ? row.storeId : '', line, 'no trip, ignored');
+    return res('no_session', 'You’re not on a trip right now.');
+  }
+  if (sess.status !== 'active') {
+    logBag(ctx, sess.storeId, line, 'trip ended, ignored');
+    return res('stale_session', 'That trip has ended.');
+  }
+  const key = sess.sid + ':' + seq;
+  if (ctx.db.hwEventSeen.key.find(key)) { logBag(ctx, sess.storeId, line, 'repeat, ignored'); return res('duplicate', 'Already counted.'); }
+  ctx.db.hwEventSeen.insert({ key, sessionId: sess.id });
+  ctx.db.shopSession.id.update({ ...sess, lastSeq: seq > sess.lastSeq ? seq : sess.lastSeq, eventCount: sess.eventCount + 1 });
+  const mapped = labelSku(ctx, sess.storeId, label);
+  const p = mapped ? findProduct(ctx, sess.storeId, mapped) : null;
+  const sku = p ? p.sku : unknownKey(ctx, sess.storeId, label);
+  if (action === 'A') {
+    cartAdd(ctx, sess.storeId, sku, 1);
+    if (p) { logBag(ctx, sess.storeId, line, '+ ' + p.name); return res('accepted', 'Added ' + p.name + ', ' + money(p.priceCents) + '.'); }
+    logBag(ctx, sess.storeId, line, 'not sold here');
+    return res('unknown_product', cap(label) + ' isn’t sold here, so it won’t be charged.');
+  }
+  if (!cartTake(ctx, sku, 1)) {
+    logBag(ctx, sess.storeId, line, 'remove, but not in bag');
+    return res('invalid_remove', 'There’s no ' + (p ? p.name : label) + ' in your bag to take out.');
+  }
+  logBag(ctx, sess.storeId, line, '− ' + (p ? p.name : label));
+  if (!p) return res('unknown_product', 'Took out ' + label + '. It isn’t sold here.');
+  return res('accepted', 'Took out ' + p.name + '.');
+}
+
+function doSetQty(ctx: Ctx, skuIn: string, qtyIn: number) {
+  const sku = skuIn.trim().slice(0, 40);
+  const qty = Math.min(999, Math.floor(qtyIn));
+  const row = shopperRow(ctx);
+  const cur = findCartLine(ctx, sku);
+  const p = row.storeId ? findProduct(ctx, row.storeId, sku) : null;
+  if (!cur && !p) throw new SenderError(row.storeId ? 'That item isn’t sold here.' : 'Walk into a Bag It store first.');
+  if (qty === 0) { if (cur) ctx.db.cartItem.id.delete(cur.id); }
+  else if (cur) ctx.db.cartItem.id.update({ ...cur, qty, storeId: row.storeId });
+  else cartAdd(ctx, row.storeId, sku, qty);
+  logBag(ctx, row.storeId, 'SET ' + sku + ' ' + qty, p ? 'fixed: ' + p.name + ' × ' + qty : 'fixed: ' + sku + ' × ' + qty);
+}
+function doRelabel(ctx: Ctx, fromIn: string, toIn: string) {
+  const from = fromIn.trim().slice(0, 40), to = toIn.trim().slice(0, 40);
+  const row = shopperRow(ctx);
+  if (!row.storeId) throw new SenderError('Walk into a Bag It store first.');
+  const p = findProduct(ctx, row.storeId, to);
+  if (!p) throw new SenderError('That item isn’t sold here.');
+  if (from === to) return;
+  if (!cartTake(ctx, from, 1)) throw new SenderError('That item isn’t in your bag.');
+  cartAdd(ctx, row.storeId, to, 1);
+  const fp = findProduct(ctx, row.storeId, from);
+  logBag(ctx, row.storeId, 'RELABEL ' + from + ' -> ' + to, 'fixed: ' + (fp ? fp.name : from) + ' → ' + p.name);
+}
+
+export const shopSessionState = spacetimedb.procedure(SessionState, (ctx) => ctx.withTx((tx) => sessionState(tx)));
+export const shopHwEvent = spacetimedb.procedure(
+  { sessionId: t.string(), seq: t.u64(), action: t.string(), label: t.string(), confidence: t.u32() }, HwEventResult,
+  (ctx, a) => ctx.withTx((tx) => doHwEvent(tx, a.sessionId, a.seq, a.action, a.label, a.confidence)));
+export const shopSetBudget = spacetimedb.procedure({ cents: t.u32() }, SessionState, (ctx, { cents }) => ctx.withTx((tx) => {
+  const key = budgetKey(tx, tx.sender);
+  if (cents === 0) tx.db.shopperBudget.key.delete(key);
+  else {
+    const row = { key, cents: Math.min(cents, MAX_BUDGET_CENTS), updatedAt: tx.timestamp };
+    if (tx.db.shopperBudget.key.find(key)) tx.db.shopperBudget.key.update(row); else tx.db.shopperBudget.insert(row);
+  }
+  return sessionState(tx);
+}));
+export const shopSetQty = spacetimedb.procedure({ sku: t.string(), qty: t.u32() }, SessionState,
+  (ctx, a) => ctx.withTx((tx) => { doSetQty(tx, a.sku, a.qty); return sessionState(tx); }));
+export const shopRelabel = spacetimedb.procedure({ fromSku: t.string(), toSku: t.string() }, SessionState,
+  (ctx, a) => ctx.withTx((tx) => { doRelabel(tx, a.fromSku, a.toSku); return sessionState(tx); }));
+
+// ── Recommendations: an OpenAI-compatible chat completions endpoint when configured, otherwise rules ──
+// Admin config (private config table): ai_url (base URL or full .../chat/completions), ai_key, ai_model.
+export const setAiConfig = spacetimedb.reducer({ url: t.string(), apiKey: t.string(), model: t.string() }, (ctx, a) => {
+  requireAdmin(ctx);
+  const url = a.url.trim();
+  if (!url) { for (const k of ['ai_url', 'ai_key', 'ai_model']) setCfg(ctx, k, ''); return; }
+  if (!/^https:\/\/[^\s]+$/.test(url) || url.length > 300) throw new SenderError('Use an https URL.');
+  if (!a.model.trim()) throw new SenderError('Name the model, for example gpt-4o-mini.');
+  setCfg(ctx, 'ai_url', url); setCfg(ctx, 'ai_key', a.apiKey.trim().slice(0, 500)); setCfg(ctx, 'ai_model', a.model.trim().slice(0, 100));
+});
+
+// Goes-with pairs over the standard catalog SKUs (stores using other SKUs simply get cheapest-first suggestions).
+const GOES_WITH: Record<string, string[]> = {
+  '1001': ['1006', '1016'], '1002': ['1012', '1008'], '1003': ['1015', '1011'], '1004': ['1007', '1015'], '1005': ['1009', '1008'],
+  '1006': ['1001', '1003'], '1007': ['1008', '1004'], '1008': ['1015', '1007'], '1009': ['1016', '1005'], '1010': ['1012', '1017'],
+  '1011': ['1009', '1003'], '1012': ['1002', '1010'], '1013': ['1014', '1015'], '1014': ['1013', '1015'], '1015': ['1008', '1003'],
+  '1016': ['1009', '1001'], '1017': ['1006', '1010'], '1018': ['1004', '1019'], '1019': ['1013', '1015'],
+};
+type Cat = { sku: string; name: string; priceCents: number; unit: string };
+type RecCtx = { storeId: string; storeName: string; catalog: Cat[]; cart: Array<{ sku: string; name: string; qty: number }>;
+  budget: number; remaining: number; ai: { url: string; key: string; model: string } | null };
+function recContext(ctx: Ctx): RecCtx {
+  const s = sessionState(ctx);
+  const storeId = s.cart.storeId;
+  const catalog = storeId ? [...ctx.db.product.by_store_sku.filter(storeId)].map((p) => ({ sku: p.sku, name: p.name, priceCents: p.priceCents, unit: p.unit })) : [];
+  const url = cfg(ctx, 'ai_url'), model = cfg(ctx, 'ai_model');
+  return {
+    storeId, storeName: s.cart.storeName, catalog,
+    cart: s.cart.lines.slice().reverse().map((l) => ({ sku: l.sku, name: l.name || l.sku, qty: l.qty })),   // newest first
+    budget: s.budgetCents, remaining: Number(s.remainingCents), ai: url && model ? { url, key: cfg(ctx, 'ai_key'), model } : null,
+  };
+}
+function fits(r: RecCtx, price: number) { return !r.budget || price <= r.remaining; }
+function ruleRecs(r: RecCtx) {
+  if (!r.storeId) return { source: 'rules', note: 'Walk into a Bag It store to get suggestions.', items: [] as any[] };
+  if (r.budget && r.remaining <= 0) return { source: 'rules', note: 'You’ve reached your budget, so there are no suggestions.', items: [] as any[] };
+  const inCart = new Set(r.cart.map((c) => c.sku));
+  const bySku = new Map(r.catalog.map((p) => [p.sku, p]));
+  const out: Array<{ sku: string; name: string; priceCents: number; reason: string }> = [];
+  const take = (p: Cat | undefined, reason: string) => {
+    if (!p || out.length >= 3 || inCart.has(p.sku) || out.some((o) => o.sku === p.sku) || !fits(r, p.priceCents)) return;
+    out.push({ sku: p.sku, name: p.name, priceCents: p.priceCents, reason });
+  };
+  for (const c of r.cart) for (const g of GOES_WITH[c.sku] || []) if (bySku.has(c.sku)) take(bySku.get(g), 'Goes with your ' + c.name.toLowerCase());
+  const rest = r.catalog.slice().sort((a, b) => a.priceCents - b.priceCents || (a.sku < b.sku ? -1 : 1));
+  for (const p of rest) take(p, r.budget ? 'Fits your remaining ' + money(r.remaining) : 'One of the lower prices at ' + r.storeName);
+  const note = out.length ? (r.budget ? 'Ideas that fit the ' + money(r.remaining) + ' left in your budget.' : 'Ideas from ' + r.storeName + '.')
+    : r.budget ? 'Nothing else here fits your budget.' : 'Nothing else to suggest here right now.';
+  return { source: 'rules', note, items: out };
+}
+function aiUrl(u: string) { return /\/chat\/completions\/?$/.test(u) ? u : u.replace(/\/+$/, '') + '/chat/completions'; }
+function aiChat(ctx: any, ai: { url: string; key: string; model: string }, system: string, user: string): any {
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (ai.key) headers.authorization = 'Bearer ' + ai.key;
+  const r = ctx.http.fetch(aiUrl(ai.url), {
+    method: 'POST', headers, timeout: TimeDuration.fromMillis(8000),
+    body: JSON.stringify({ model: ai.model, temperature: 0.3, max_tokens: 400, response_format: { type: 'json_object' },
+      messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
+  });
+  if (!r.ok) throw new Error('ai http ' + r.status);
+  const j = r.json();
+  const txt = String(j?.choices?.[0]?.message?.content ?? '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+  return JSON.parse(txt);
+}
+function aiRecs(ctx: any, r: RecCtx) {
+  const system = 'You suggest up to 3 grocery items a shopper might add. Reply with strict JSON only: '
+    + '{"note": string, "items": [{"sku": string, "reason": string}]}. Use only SKUs from the catalog, never items already '
+    + 'in the cart, and when a budget is given never an item priced above remainingCents. Reasons and note: plain, '
+    + 'sentence case, under 60 characters, no emoji, no exclamation marks.';
+  const user = JSON.stringify({ store: r.storeName, catalog: r.catalog, cart: r.cart, budgetCents: r.budget || null,
+    remainingCents: r.budget ? r.remaining : null });
+  const j = aiChat(ctx, r.ai!, system, user);
+  const inCart = new Set(r.cart.map((c) => c.sku));
+  const bySku = new Map(r.catalog.map((p) => [p.sku, p]));
+  const items: Array<{ sku: string; name: string; priceCents: number; reason: string }> = [];
+  for (const it of Array.isArray(j?.items) ? j.items : []) {
+    const p = bySku.get(String(it?.sku ?? ''));
+    if (!p || inCart.has(p.sku) || items.some((x) => x.sku === p.sku) || !fits(r, p.priceCents)) continue;
+    const reason = String(it?.reason ?? '').replace(/[\r\n]+/g, ' ').trim().slice(0, 80) || 'Suggested for your trip';
+    items.push({ sku: p.sku, name: p.name, priceCents: p.priceCents, reason });
+    if (items.length >= 3) break;
+  }
+  if (!items.length) throw new Error('ai gave no valid items');
+  const note = String(j?.note ?? '').replace(/[\r\n]+/g, ' ').trim().slice(0, 120) || 'Suggestions for your trip.';
+  return { source: 'ai', note, items };
+}
+export const shopRecommend = spacetimedb.procedure(Recommendations, (ctx) => {
+  const r = ctx.withTx((tx) => recContext(tx));
+  const rules = ruleRecs(r);
+  if (!r.ai || !r.storeId || (r.budget && r.remaining <= 0)) return rules;
+  try { return aiRecs(ctx, r); } catch (_e) { return rules; }    // any AI failure falls back to the rules
+});
+
+// ── Trip summary ──
+function canSeeOrder(ctx: Ctx, orderId: bigint) {
+  const ow = ctx.db.orderOwner.orderId.find(orderId);
+  if (!ow) return false;
+  const p = principalOf(ctx, ctx.sender);
+  return p ? ow.accountId === p : (ow.accountId === 0n && ow.identity.toHexString() === ctx.sender.toHexString());
+}
+const plur = (n: number, w: string) => n + ' ' + w + (n === 1 ? '' : 's');
+// The phone's latest finished visit that wrote no order (empty bag, or only items the store doesn't sell), if it is
+// newer than the order a summary would otherwise show and belongs to the current login's time on this phone.
+function emptyVisitAfter(ctx: Ctx, order: { paidAt: { microsSinceUnixEpoch: bigint } } | null) {
+  let last = null as null | SessionRow;
+  for (const s of ctx.db.shopSession.identity.filter(ctx.sender)) if (s.status === 'completed' && (!last || s.id > last.id)) last = s;
+  if (!last || last.orderId !== 0n) return null;
+  if (order && order.paidAt.microsSinceUnixEpoch >= last.endedMicros) return null;
+  const l = loginOf(ctx);
+  if (l && l.signedInAt.microsSinceUnixEpoch > last.endedMicros) return null;
+  return last;
+}
+function summaryOf(ctx: Ctx, orderId: bigint) {
+  const order = orderId ? (canSeeOrder(ctx, orderId) ? ctx.db.shopOrder.id.find(orderId) : null) : latestOwnOrder(ctx);
+  if (orderId && !order) throw new SenderError('We couldn’t find that trip.');
+  const empty = orderId ? null : emptyVisitAfter(ctx, order);
+  if (empty) {
+    const st = ctx.db.store.id.find(empty.storeId);
+    const mins = Math.max(1, Math.round(Number(empty.endedMicros - empty.startedAt.microsSinceUnixEpoch) / 60_000_000));
+    return { receipt: NO_RECEIPT, sessionId: empty.sid, startedMicros: empty.startedAt.microsSinceUnixEpoch, endedMicros: empty.endedMicros,
+      eventCount: empty.eventCount, budgetCents: empty.budgetCents, underBudgetCents: BigInt(empty.budgetCents),
+      text: 'You left ' + (st ? st.name : 'the store') + ' with nothing to pay for. Your trip took ' + plur(mins, 'minute') + '.' };
+  }
+  if (!order) return { receipt: NO_RECEIPT, sessionId: '', startedMicros: 0n, endedMicros: 0n, eventCount: 0, budgetCents: 0, underBudgetCents: 0n, text: 'No trips yet.' };
+  let sess = null as null | SessionRow;
+  for (const s of ctx.db.shopSession.orderId.filter(order.id)) { sess = s; break; }
+  const budget = sess ? sess.budgetCents : 0;
+  const started = sess ? sess.startedAt.microsSinceUnixEpoch : 0n;
+  const ended = sess && sess.endedMicros ? sess.endedMicros : order.paidAt.microsSinceUnixEpoch;
+  const parts: string[] = [];
+  const paid = order.status === 'paid';
+  parts.push((paid ? 'You spent ' : 'Your total was ') + money(order.totalCents) + ' on ' + plur(order.itemCount, 'item') + ' at ' + order.storeName + '.');
+  if (started > 0n && ended > started) {
+    const mins = Math.max(1, Math.round(Number(ended - started) / 60_000_000));
+    parts.push('Your trip took ' + plur(mins, 'minute') + '.');
+  }
+  if (budget) {
+    const d = budget - order.totalCents;
+    parts.push(d > 0 ? 'That’s ' + money(d) + ' under your ' + money(budget) + ' budget.' : d < 0 ? 'That’s ' + money(-d) + ' over your ' + money(budget) + ' budget.' : 'That’s right on your ' + money(budget) + ' budget.');
+  }
+  if (order.unpricedCount) parts.push(plur(order.unpricedCount, 'item') + (order.unpricedCount === 1 ? ' wasn’t' : ' weren’t') + ' sold here and ' + (order.unpricedCount === 1 ? 'wasn’t' : 'weren’t') + ' charged.');
+  if (!paid) parts.push('No card was on file, so nothing was charged. Show exit code ' + order.code + ' to store staff.');
+  return {
+    receipt: receiptOf(ctx, order), sessionId: sess ? sess.sid : '', startedMicros: started, endedMicros: ended,
+    eventCount: sess ? sess.eventCount : 0, budgetCents: budget, underBudgetCents: budget ? BigInt(budget - order.totalCents) : 0n,
+    text: parts.join(' '),
+  };
+}
+export const shopSummary = spacetimedb.procedure({ orderId: t.u64() }, TripSummary, (ctx, { orderId }) => ctx.withTx((tx) => summaryOf(tx, orderId)));
+
+// The current store's catalog for the apps' 'Change item' picker (contract v1.1). reason = the camera label(s) mapped to
+// the product ('' if none). Empty outside a store.
+export const shopStoreProducts = spacetimedb.procedure(t.array(Recommendation), (ctx) => ctx.withTx((tx) => {
+  const row = tx.db.shopper.identity.find(tx.sender);
+  const storeId = row ? row.storeId : '';
+  if (!storeId) return [];
+  const labels = new Map<string, string[]>();
+  for (const l of tx.db.productLabel.by_store_label.filter(storeId)) labels.set(l.sku, [...(labels.get(l.sku) || []), l.label]);
+  return [...tx.db.product.by_store_sku.filter(storeId)]
+    .map((p) => ({ sku: p.sku, name: p.name, priceCents: p.priceCents, reason: (labels.get(p.sku) || []).sort().join(', ') }))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}));
+
+// The cart lost its session (rebooted, or stopped it after 30 minutes) while the phone is still on the visit: the cart
+// would restart the same sid at seq 1 and the backend would answer 'duplicate'. The phone calls this instead of
+// re-STARTing the old sid when STATUS shows the cart is not ACTIVE on it and lastSeq > 0: the same visit and cart get a
+// new session id and a fresh sequence space; events still tagged with the old id answer no_session.
+export const shopSessionRekey = spacetimedb.procedure(SessionState, (ctx) => ctx.withTx((tx) => {
+  const s = activeSessionOf(tx, tx.sender);
+  if (!s) return sessionState(tx);
+  let n = 1, sid = '';
+  do { sid = 's' + s.id.toString(36) + 'r' + (n++).toString(36); } while (tx.db.shopSession.sid.find(sid));
+  if (sid.length > 12) throw new SenderError('Session can’t be renewed.');
+  for (const e of [...tx.db.hwEventSeen.sessionId.filter(s.id)]) tx.db.hwEventSeen.key.delete(e.key);
+  tx.db.shopSession.id.update({ ...s, sid, lastSeq: 0n });
+  logBag(tx, s.storeId, 'REKEY ' + s.sid + ' -> ' + sid, 'cart restarted, new session');
+  return sessionState(tx);
 }));
