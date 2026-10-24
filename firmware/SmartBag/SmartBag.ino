@@ -5,6 +5,9 @@
 //   +1001@TAG42     add, deduplicated by tag id (use your RFID tag UID here)
 // Swap the Serial read in loop() for your RFID / barcode reader when the hardware is ready.
 // BLE packets carry 20 bytes by default; the app reassembles text across packets until "\n".
+// Pairing (v2): every bag advertises a unique name, SmartBag-XXXX (last two bytes of its MAC). When the phone
+// writes "HELLO", the light blinks three times and the bag answers "BAG <name> fw2" so the app can confirm
+// which bag is in your hand. Apps treat lines starting with "BAG " as control lines, never as items.
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -17,6 +20,8 @@
 
 BLECharacteristic *txChar;
 bool connected = false;
+volatile bool helloRequested = false;
+String bagName;
 
 class ServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer *s) override { connected = true; Serial.println("phone connected"); }
@@ -28,6 +33,7 @@ class RxCallbacks : public BLECharacteristicCallbacks {
     String msg = String(c->getValue().c_str());
     msg.trim();
     Serial.print("phone: "); Serial.println(msg);
+    if (msg.startsWith("HELLO")) { helloRequested = true; return; }   // handled in loop(): never block the BLE callback
     if (msg.startsWith("OK") || msg.startsWith("PAID")) { digitalWrite(LED_PIN, HIGH); delay(120); digitalWrite(LED_PIN, LOW); }
   }
 };
@@ -43,7 +49,11 @@ void sendLine(const String &line) {
 void setup() {
   Serial.begin(115200);
   pinMode(LED_PIN, OUTPUT);
-  BLEDevice::init("SmartBag-01");
+  uint64_t mac = ESP.getEfuseMac();
+  char name[20];
+  snprintf(name, sizeof name, "SmartBag-%04X", (unsigned)((mac >> 32) & 0xFFFF));
+  bagName = String(name);
+  BLEDevice::init(name);
   BLEServer *server = BLEDevice::createServer();
   server->setCallbacks(new ServerCallbacks());
   BLEService *svc = server->createService(NUS_SERVICE);
@@ -56,10 +66,15 @@ void setup() {
   adv->addServiceUUID(NUS_SERVICE);
   adv->setScanResponse(true);
   BLEDevice::startAdvertising();
-  Serial.println("SmartBag-01 advertising");
+  Serial.println(bagName + " advertising");
 }
 
 void loop() {
+  if (helloRequested) {
+    helloRequested = false;
+    for (int i = 0; i < 3; i++) { digitalWrite(LED_PIN, HIGH); delay(180); digitalWrite(LED_PIN, LOW); delay(180); }
+    sendLine("BAG " + bagName + " fw2");
+  }
   if (Serial.available()) {
     String line = Serial.readStringUntil('\n');
     line.trim();

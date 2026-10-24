@@ -13,3 +13,8 @@ Arduino sketch (ESP32 core 2.x or 3.x). Advertises as `SmartBag-01` with the BLE
 **Phone → bag**: `OK +1005 4.69`, `OK -1005`, `ERR 9999 unknown`, `PAID 7KQ2XD` after the shopper walks out (the LED blinks on OK/PAID).
 
 For now items are typed into the Serial Monitor (115200 baud). Replace the Serial read in `loop()` with your RFID or barcode reader, sending the tag UID after `@`.
+
+
+## Pairing (firmware v2)
+
+Each bag advertises a unique Bluetooth name, `SmartBag-XXXX` (the last two bytes of its MAC address), so the Bag It app can tell bags apart on its pairing screen. When the phone writes `HELLO`, the status light blinks three times and the bag replies `BAG <name> fw2`; the app shows "Is the light on your bag blinking?" so you confirm the bag in your hand. Apps treat lines that start with `BAG ` as control lines, never as items. Bags flashed with v1 all advertise `SmartBag-01` and do not blink on `HELLO`; reflash to pair more than one bag.
