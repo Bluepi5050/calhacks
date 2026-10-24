@@ -31,3 +31,10 @@ spacetime publish <database-name> --server maincloud --yes
 - Procedure: `server_time`. Views (each scoped to the caller): `my_account`, `my_team`, `my_store_activity`, `my_store_people`, `my_invites`.
 - Published with `--delete-data=never`. The shop_* phone API is unchanged.
 - `tools/setup_auth.py` finishes the SpacetimeAuth setup once it has been enabled on the dashboard.
+
+
+## Shopper accounts (v5)
+
+Email + password accounts for the Bag It phone apps, stored in private tables (`shopper_account`, `shopper_login`, `payment_card`, `paired_bag`). Passwords are hashed with PBKDF2-HMAC-SHA256 (salted; 8 failed attempts lock the account for 15 minutes). A phone keeps its own SpacetimeDB identity; signing in links that identity to the account, so one account works on several phones and `shop_trips` returns the trips of every linked phone. Cards store only brand, last four digits, expiry and an optional nickname; the full number never reaches the database (payments are simulated). The default card's label is copied into each signed-in phone's `shopper.payment`, which is what a walk-out charges. Public `shopper` rows now keep only coarse (about 1 km) coordinates.
+
+Procedures (all return `AccountState` unless noted): `account_state`, `account_sign_up(name, email, password)`, `account_sign_in(email, password)`, `account_sign_out`, `account_set_name(name)`, `account_delete(password)`, `card_add(brand, last4, exp_month, exp_year, nickname, make_default)`, `card_remove(id)`, `card_set_default(id)`, `bag_pair(bag_id, name)`, `bag_rename(id, name)`, `bag_unpair(id)`, `shop_trips(limit) -> Receipt[]` (newest first).

@@ -164,9 +164,50 @@ const activity = table({ name: 'activity' }, {        // private: who changed wh
   at: t.timestamp(),
 });
 
+
+// ── Shopper accounts (v5, additive): email + password accounts for the phone apps, a wallet of saved cards
+// and paired bags. A phone keeps its own SpacetimeDB identity; signing in links that identity to the account,
+// so the same account works on several phones. All private; phones read them through account_* procedures.
+// Cards: only brand, last four digits and expiry are stored. The full number never reaches the database.
+const shopperAccount = table({ name: 'shopper_account' }, {
+  id: t.u64().primaryKey().autoInc(),
+  email: t.string().unique(),          // lower-cased
+  name: t.string(),
+  passHash: t.string(),                // hex PBKDF2-HMAC-SHA256
+  salt: t.string(),
+  iterations: t.u32(),
+  failedLogins: t.u32(),
+  lockedUntilMicros: t.i64(),
+  createdAt: t.timestamp(),
+});
+const shopperLogin = table({ name: 'shopper_login' }, {     // which phone identities are signed in to which account
+  identity: t.identity().primaryKey(),
+  accountId: t.u64().index('btree'),
+  signedInAt: t.timestamp(),
+});
+const paymentCard = table({ name: 'payment_card' }, {
+  id: t.u64().primaryKey().autoInc(),
+  accountId: t.u64().index('btree'),
+  brand: t.string(),
+  last4: t.string(),
+  expMonth: t.u32(),
+  expYear: t.u32(),
+  nickname: t.string(),
+  isDefault: t.bool(),
+  addedAt: t.timestamp(),
+});
+const pairedBag = table({ name: 'paired_bag' }, {
+  id: t.u64().primaryKey().autoInc(),
+  accountId: t.u64().index('btree'),
+  bagId: t.string().unique(),          // the bag's Bluetooth name, e.g. SmartBag-3F2A (one account per bag)
+  name: t.string(),
+  pairedAt: t.timestamp(),
+});
+
 const spacetimedb = schema({
   store, product, shopper, cartItem, shopOrder, orderLine, bagEvent, operator, config, storeStaff, storeInvite, cleanupTimer,
   account, profile, staffEmailInvite, activity, storeOwner, memberName,
+  shopperAccount, shopperLogin, paymentCard, pairedBag,
 });
 export default spacetimedb;
 
@@ -352,7 +393,8 @@ function doLocate(ctx: Ctx, lat: number, lng: number, accuracyM: number) {
     nearestName: nearest ? nearest.name : '',
     nearestM: nearest ? Math.round(nearest.d) : 0,
     outsideFixes: outside,
-    lat, lng, updatedAt: ctx.timestamp,
+    lat: Math.round(lat * 100) / 100, lng: Math.round(lng * 100) / 100,   // public table: coarse (~1 km) only
+    updatedAt: ctx.timestamp,
   });
   if (row.storeId !== newStore) {
     for (const c of [...ctx.db.cartItem.by_shopper_sku.filter(ctx.sender)]) ctx.db.cartItem.id.update({ ...c, storeId: newStore });
@@ -924,3 +966,299 @@ export const declineInvite = spacetimedb.reducer({ id: t.u64() }, (ctx, { id }) 
   ctx.db.staffEmailInvite.id.delete(id);
   logActivity(ctx, inv.storeId, 'declined the invite for ' + inv.email);
 });
+
+
+// ───────────────────────── Shopper accounts, wallet, bags, trips (v5) ─────────────────────────
+
+// SHA-256 / HMAC / PBKDF2 in plain TypeScript (modules have no crypto library).
+const K256 = new Uint32Array([0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]);
+function sha256(msg: Uint8Array): Uint8Array {
+  const h = new Uint32Array([0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19]);
+  const l = msg.length, nBlocks = ((l + 9 + 63) >> 6);
+  const buf = new Uint8Array(nBlocks * 64); buf.set(msg); buf[l] = 0x80;
+  const bits = l * 8; const dv = new DataView(buf.buffer);
+  dv.setUint32(buf.length - 4, bits >>> 0); dv.setUint32(buf.length - 8, Math.floor(bits / 0x100000000));
+  const w = new Uint32Array(64);
+  for (let b = 0; b < nBlocks; b++) {
+    for (let i = 0; i < 16; i++) w[i] = dv.getUint32(b * 64 + i * 4);
+    for (let i = 16; i < 64; i++) {
+      const x = w[i - 15], y = w[i - 2];
+      const s0 = ((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3);
+      const s1 = ((y >>> 17) | (y << 15)) ^ ((y >>> 19) | (y << 13)) ^ (y >>> 10);
+      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
+    }
+    let a = h[0], bb = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
+    for (let i = 0; i < 64; i++) {
+      const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+      const ch = (e & f) ^ (~e & g);
+      const t1 = (hh + S1 + ch + K256[i] + w[i]) >>> 0;
+      const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+      const mj = (a & bb) ^ (a & c) ^ (bb & c);
+      const t2 = (S0 + mj) >>> 0;
+      hh = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = bb; bb = a; a = (t1 + t2) >>> 0;
+    }
+    h[0] = (h[0] + a) >>> 0; h[1] = (h[1] + bb) >>> 0; h[2] = (h[2] + c) >>> 0; h[3] = (h[3] + d) >>> 0;
+    h[4] = (h[4] + e) >>> 0; h[5] = (h[5] + f) >>> 0; h[6] = (h[6] + g) >>> 0; h[7] = (h[7] + hh) >>> 0;
+  }
+  const out = new Uint8Array(32); const ov = new DataView(out.buffer);
+  for (let i = 0; i < 8; i++) ov.setUint32(i * 4, h[i]);
+  return out;
+}
+const utf8 = (x: string) => new TextEncoder().encode(x);
+const toHex = (b: Uint8Array) => Array.from(b).map((x) => x.toString(16).padStart(2, '0')).join('');
+function hmacSha256(key: Uint8Array, msg: Uint8Array): Uint8Array {
+  let k = key.length > 64 ? sha256(key) : key;
+  const ipad = new Uint8Array(64 + msg.length), opad = new Uint8Array(64 + 32);
+  for (let i = 0; i < 64; i++) { const kb = i < k.length ? k[i] : 0; ipad[i] = kb ^ 0x36; opad[i] = kb ^ 0x5c; }
+  ipad.set(msg, 64);
+  opad.set(sha256(ipad), 64);
+  return sha256(opad);
+}
+function pbkdf2(password: string, salt: string, iterations: number): string {
+  const p = utf8(password), sb = utf8(salt);
+  const first = new Uint8Array(sb.length + 4); first.set(sb); first[sb.length + 3] = 1;
+  let u = hmacSha256(p, first); const out = u.slice();
+  for (let i = 1; i < iterations; i++) { u = hmacSha256(p, u); for (let j = 0; j < 32; j++) out[j] ^= u[j]; }
+  return toHex(out);
+}
+function sameHex(a: string, b: string) { if (a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; }
+
+const PBKDF2_ITER = 3000;
+const MAX_FAILED = 8;
+const LOCK_MICROS = 900_000_000n;     // 15 minutes
+const MAX_CARDS = 10, MAX_BAGS = 5;
+const BRANDS = ['Visa', 'Mastercard', 'Amex', 'Discover', 'Card'];
+const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/;
+const BAG_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
+
+function loginOf(ctx: Ctx) { return ctx.db.shopperLogin.identity.find(ctx.sender); }
+function requireLogin(ctx: Ctx) {
+  const l = loginOf(ctx);
+  const acct = l ? ctx.db.shopperAccount.id.find(l.accountId) : null;
+  if (!l || !acct) throw new SenderError('Log in first.');
+  return acct;
+}
+function cardLabel(c: { brand: string; last4: string; nickname: string }) {
+  return (c.nickname ? c.nickname + ' ' : '') + c.brand + ' •••• ' + c.last4;
+}
+function cardsOf(ctx: Ctx, accountId: bigint) {
+  return [...ctx.db.paymentCard.accountId.filter(accountId)].sort((a, b) => (a.id < b.id ? -1 : 1));
+}
+function defaultLabel(ctx: Ctx, accountId: bigint) {
+  const d = cardsOf(ctx, accountId).find((c) => c.isDefault);
+  return d ? cardLabel(d) : '';
+}
+// The walk-out charge reads shopper.payment, so keep every signed-in phone's row in step with the default card.
+function syncPayment(ctx: Ctx, accountId: bigint) {
+  const label = defaultLabel(ctx, accountId);
+  for (const l of [...ctx.db.shopperLogin.accountId.filter(accountId)]) {
+    const row = ctx.db.shopper.identity.find(l.identity);
+    if (row && row.payment !== label) ctx.db.shopper.identity.update({ ...row, payment: label, updatedAt: ctx.timestamp });
+    else if (!row && l.identity.toHexString() === ctx.sender.toHexString()) { const r = shopperRow(ctx); ctx.db.shopper.identity.update({ ...r, payment: label }); }
+  }
+}
+function setShopperName(ctx: Ctx, name: string) {
+  if (ctx.db.account.identity.find(ctx.sender)) return;      // console (SpacetimeAuth) accounts keep their own name
+  const n = ctx.db.memberName.identity.find(ctx.sender);
+  if (n) ctx.db.memberName.identity.update({ identity: ctx.sender, name }); else ctx.db.memberName.insert({ identity: ctx.sender, name });
+}
+function linkLogin(ctx: Ctx, acct: { id: bigint; name: string }) {
+  const cur = loginOf(ctx);
+  if (cur) ctx.db.shopperLogin.identity.update({ identity: ctx.sender, accountId: acct.id, signedInAt: ctx.timestamp });
+  else ctx.db.shopperLogin.insert({ identity: ctx.sender, accountId: acct.id, signedInAt: ctx.timestamp });
+  setShopperName(ctx, acct.name);
+  syncPayment(ctx, acct.id);
+}
+function unlinkLogin(ctx: Ctx) {
+  ctx.db.shopperLogin.identity.delete(ctx.sender);
+  const row = ctx.db.shopper.identity.find(ctx.sender);
+  if (row) ctx.db.shopper.identity.update({ ...row, payment: '', bag: '', updatedAt: ctx.timestamp });
+  if (!ctx.db.account.identity.find(ctx.sender)) ctx.db.memberName.identity.delete(ctx.sender);
+}
+function nowYm(ctx: Ctx) { const d = new Date(Number(ctx.timestamp.microsSinceUnixEpoch / 1000n)); return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1 }; }
+
+const CardInfo = t.object('CardInfo', {
+  id: t.u64(), brand: t.string(), last4: t.string(), expMonth: t.u32(), expYear: t.u32(), nickname: t.string(), isDefault: t.bool(),
+});
+const BagInfo = t.object('BagInfo', { id: t.u64(), bagId: t.string(), name: t.string(), pairedMicros: t.i64() });
+const AccountState = t.object('AccountState', {
+  signedIn: t.bool(), name: t.string(), email: t.string(), cards: t.array(CardInfo), bags: t.array(BagInfo), payment: t.string(),
+});
+function acctState(ctx: Ctx) {
+  const l = loginOf(ctx);
+  const acct = l ? ctx.db.shopperAccount.id.find(l.accountId) : null;
+  if (!acct) return { signedIn: false, name: '', email: '', cards: [], bags: [], payment: '' };
+  const cards = cardsOf(ctx, acct.id).map((c) => ({ id: c.id, brand: c.brand, last4: c.last4, expMonth: c.expMonth, expYear: c.expYear, nickname: c.nickname, isDefault: c.isDefault }));
+  const bags = [...ctx.db.pairedBag.accountId.filter(acct.id)].sort((a, b) => (a.id < b.id ? -1 : 1))
+    .map((b) => ({ id: b.id, bagId: b.bagId, name: b.name, pairedMicros: b.pairedAt.microsSinceUnixEpoch }));
+  return { signedIn: true, name: acct.name, email: acct.email, cards, bags, payment: defaultLabel(ctx, acct.id) };
+}
+function cleanName(name: string) {
+  const n = name.trim().replace(/\s+/g, ' ').slice(0, 60);
+  if (!n) throw new SenderError('Enter your name.');
+  return n;
+}
+function cleanEmail(email: string) {
+  const e = email.trim().toLowerCase();
+  if (!EMAIL_RE.test(e) || e.length > 254) throw new SenderError('Enter a valid email address.');
+  return e;
+}
+function checkPassword(pw: string) {
+  if (pw.length < 8) throw new SenderError('Use at least 8 characters for your password.');
+  if (pw.length > 128) throw new SenderError('That password is too long.');
+}
+function verifyPassword(ctx: Ctx, acct: any, password: string) {
+  const now = ctx.timestamp.microsSinceUnixEpoch;
+  if (acct.lockedUntilMicros > now) {
+    const mins = Number((acct.lockedUntilMicros - now) / 60_000_000n) + 1;
+    throw new SenderError('Too many tries. Try again in ' + mins + ' minute' + (mins === 1 ? '' : 's') + '.');
+  }
+  return sameHex(pbkdf2(password, acct.salt, acct.iterations), acct.passHash);
+}
+
+function doSignUp(ctx: Ctx, name: string, email: string, password: string) {
+  const n = cleanName(name), e = cleanEmail(email);
+  checkPassword(password);
+  if (ctx.db.shopperAccount.email.find(e)) throw new SenderError('That email already has an account. Log in instead.');
+  const salt = randomCode(ctx, 16);
+  const acct = ctx.db.shopperAccount.insert({
+    id: 0n, email: e, name: n, passHash: pbkdf2(password, salt, PBKDF2_ITER), salt, iterations: PBKDF2_ITER,
+    failedLogins: 0, lockedUntilMicros: 0n, createdAt: ctx.timestamp,
+  });
+  linkLogin(ctx, acct);
+}
+// Failed attempts are counted in their own transaction so the error does not roll the count back.
+function signInAttempt(ctx: Ctx, email: string, password: string): string {
+  const e = email.trim().toLowerCase();
+  const acct = ctx.db.shopperAccount.email.find(e);
+  if (!acct) { pbkdf2(password, 'x', PBKDF2_ITER); return 'Email or password is wrong.'; }     // same cost either way
+  const ok = verifyPassword(ctx, acct, password);
+  if (!ok) {
+    const failed = acct.failedLogins + 1;
+    const lock = failed >= MAX_FAILED;
+    ctx.db.shopperAccount.id.update({ ...acct, failedLogins: lock ? 0 : failed, lockedUntilMicros: lock ? ctx.timestamp.microsSinceUnixEpoch + LOCK_MICROS : acct.lockedUntilMicros });
+    return lock ? 'Too many tries. Try again in 15 minutes.' : 'Email or password is wrong.';
+  }
+  if (acct.failedLogins) ctx.db.shopperAccount.id.update({ ...acct, failedLogins: 0 });
+  linkLogin(ctx, ctx.db.shopperAccount.id.find(acct.id)!);
+  return '';
+}
+function doDeleteAccount(ctx: Ctx, password: string): string {
+  const acct = requireLogin(ctx);
+  if (!verifyPassword(ctx, acct, password)) return 'That password is wrong.';
+  const logins = [...ctx.db.shopperLogin.accountId.filter(acct.id)];
+  for (const l of logins) {
+    ctx.db.shopperLogin.identity.delete(l.identity);
+    const row = ctx.db.shopper.identity.find(l.identity);
+    if (row) ctx.db.shopper.identity.update({ ...row, payment: '', bag: '' });
+    if (!ctx.db.account.identity.find(l.identity)) ctx.db.memberName.identity.delete(l.identity);
+  }
+  for (const c of [...ctx.db.paymentCard.accountId.filter(acct.id)]) ctx.db.paymentCard.id.delete(c.id);
+  for (const b of [...ctx.db.pairedBag.accountId.filter(acct.id)]) ctx.db.pairedBag.id.delete(b.id);
+  ctx.db.shopperAccount.id.delete(acct.id);
+  return '';
+}
+function doCardAdd(ctx: Ctx, a: { brand: string; last4: string; expMonth: number; expYear: number; nickname: string; makeDefault: boolean }) {
+  const acct = requireLogin(ctx);
+  const brand = BRANDS.find((b) => b.toLowerCase() === a.brand.trim().toLowerCase());
+  if (!brand) throw new SenderError('That card type isn’t supported.');
+  if (!/^\d{4}$/.test(a.last4)) throw new SenderError('Check the card number.');
+  if (a.expMonth < 1 || a.expMonth > 12) throw new SenderError('Check the expiry date.');
+  const year = a.expYear < 100 ? 2000 + a.expYear : a.expYear;
+  const now = nowYm(ctx);
+  if (year < now.y || (year === now.y && a.expMonth < now.m)) throw new SenderError('This card has expired.');
+  if (year > now.y + 25) throw new SenderError('Check the expiry date.');
+  const cards = cardsOf(ctx, acct.id);
+  if (cards.length >= MAX_CARDS) throw new SenderError('You can save up to ' + MAX_CARDS + ' cards.');
+  if (cards.some((c) => c.brand === brand && c.last4 === a.last4 && c.expMonth === a.expMonth && c.expYear === year)) throw new SenderError('This card is already in your wallet.');
+  const makeDefault = a.makeDefault || cards.length === 0;
+  if (makeDefault) for (const c of cards) if (c.isDefault) ctx.db.paymentCard.id.update({ ...c, isDefault: false });
+  ctx.db.paymentCard.insert({ id: 0n, accountId: acct.id, brand, last4: a.last4, expMonth: a.expMonth, expYear: year,
+    nickname: a.nickname.trim().replace(/\s+/g, ' ').slice(0, 24), isDefault: makeDefault, addedAt: ctx.timestamp });
+  syncPayment(ctx, acct.id);
+}
+function ownCard(ctx: Ctx, id: bigint) {
+  const acct = requireLogin(ctx);
+  const c = ctx.db.paymentCard.id.find(id);
+  if (!c || c.accountId !== acct.id) throw new SenderError('That card isn’t in your wallet.');
+  return { acct, c };
+}
+function doCardRemove(ctx: Ctx, id: bigint) {
+  const { acct, c } = ownCard(ctx, id);
+  ctx.db.paymentCard.id.delete(c.id);
+  if (c.isDefault) { const next = cardsOf(ctx, acct.id)[0]; if (next) ctx.db.paymentCard.id.update({ ...next, isDefault: true }); }
+  syncPayment(ctx, acct.id);
+}
+function doCardDefault(ctx: Ctx, id: bigint) {
+  const { acct, c } = ownCard(ctx, id);
+  for (const o of cardsOf(ctx, acct.id)) if (o.isDefault !== (o.id === c.id)) ctx.db.paymentCard.id.update({ ...o, isDefault: o.id === c.id });
+  syncPayment(ctx, acct.id);
+}
+function doBagPair(ctx: Ctx, bagId: string, name: string) {
+  const acct = requireLogin(ctx);
+  const id = bagId.trim();
+  if (!BAG_ID_RE.test(id)) throw new SenderError('That doesn’t look like a Bag It bag.');
+  const n = name.trim().replace(/\s+/g, ' ').slice(0, 30) || 'My bag';
+  const existing = ctx.db.pairedBag.bagId.find(id);
+  if (existing && existing.accountId === acct.id) { ctx.db.pairedBag.id.update({ ...existing, name: n }); return; }
+  const mine = [...ctx.db.pairedBag.accountId.filter(acct.id)];
+  if (mine.length >= MAX_BAGS) throw new SenderError('You can pair up to ' + MAX_BAGS + ' bags.');
+  if (existing) ctx.db.pairedBag.id.delete(existing.id);      // pairing needs the bag in hand: the newest owner wins
+  ctx.db.pairedBag.insert({ id: 0n, accountId: acct.id, bagId: id, name: n, pairedAt: ctx.timestamp });
+}
+function ownBag(ctx: Ctx, id: bigint) {
+  const acct = requireLogin(ctx);
+  const b = ctx.db.pairedBag.id.find(id);
+  if (!b || b.accountId !== acct.id) throw new SenderError('That bag isn’t paired to your account.');
+  return b;
+}
+function tripsOf(ctx: Ctx, limit: number) {
+  const l = loginOf(ctx);
+  const who = l ? [...ctx.db.shopperLogin.accountId.filter(l.accountId)].map((x) => x.identity) : [ctx.sender];
+  if (l && !who.some((w) => w.toHexString() === ctx.sender.toHexString())) who.push(ctx.sender);
+  const orders: any[] = [];
+  for (const w of who) for (const o of ctx.db.shopOrder.shopper.filter(w)) orders.push(o);
+  orders.sort((a, b) => (a.id > b.id ? -1 : 1));
+  return orders.slice(0, Math.max(1, Math.min(limit || 50, 200))).map((o) => receiptOf(ctx, o));
+}
+
+// Sign-in failures must persist (attempt counting), so they are returned, not thrown, inside the transaction.
+function orThrow(msg: string) { if (msg) throw new SenderError(msg); }
+
+export const accountState = spacetimedb.procedure(AccountState, (ctx) => ctx.withTx((tx) => acctState(tx)));
+export const accountSignUp = spacetimedb.procedure({ name: t.string(), email: t.string(), password: t.string() }, AccountState,
+  (ctx, a) => ctx.withTx((tx) => { doSignUp(tx, a.name, a.email, a.password); return acctState(tx); }));
+export const accountSignIn = spacetimedb.procedure({ email: t.string(), password: t.string() }, AccountState, (ctx, a) => {
+  const msg = ctx.withTx((tx) => signInAttempt(tx, a.email, a.password));
+  orThrow(msg);
+  return ctx.withTx((tx) => acctState(tx));
+});
+export const accountSignOut = spacetimedb.procedure(AccountState, (ctx) => ctx.withTx((tx) => { unlinkLogin(tx); return acctState(tx); }));
+export const accountSetName = spacetimedb.procedure({ name: t.string() }, AccountState, (ctx, { name }) => ctx.withTx((tx) => {
+  const acct = requireLogin(tx); const n = cleanName(name);
+  tx.db.shopperAccount.id.update({ ...acct, name: n });
+  for (const l of [...tx.db.shopperLogin.accountId.filter(acct.id)]) {
+    if (tx.db.account.identity.find(l.identity)) continue;
+    const m = tx.db.memberName.identity.find(l.identity);
+    if (m) tx.db.memberName.identity.update({ identity: l.identity, name: n }); else tx.db.memberName.insert({ identity: l.identity, name: n });
+  }
+  return acctState(tx);
+}));
+export const accountDelete = spacetimedb.procedure({ password: t.string() }, AccountState, (ctx, { password }) => {
+  orThrow(ctx.withTx((tx) => doDeleteAccount(tx, password)));
+  return ctx.withTx((tx) => acctState(tx));
+});
+export const cardAdd = spacetimedb.procedure(
+  { brand: t.string(), last4: t.string(), expMonth: t.u32(), expYear: t.u32(), nickname: t.string(), makeDefault: t.bool() }, AccountState,
+  (ctx, a) => ctx.withTx((tx) => { doCardAdd(tx, a); return acctState(tx); }));
+export const cardRemove = spacetimedb.procedure({ id: t.u64() }, AccountState, (ctx, { id }) => ctx.withTx((tx) => { doCardRemove(tx, id); return acctState(tx); }));
+export const cardSetDefault = spacetimedb.procedure({ id: t.u64() }, AccountState, (ctx, { id }) => ctx.withTx((tx) => { doCardDefault(tx, id); return acctState(tx); }));
+export const bagPair = spacetimedb.procedure({ bagId: t.string(), name: t.string() }, AccountState,
+  (ctx, a) => ctx.withTx((tx) => { doBagPair(tx, a.bagId, a.name); return acctState(tx); }));
+export const bagRename = spacetimedb.procedure({ id: t.u64(), name: t.string() }, AccountState, (ctx, a) => ctx.withTx((tx) => {
+  const b = ownBag(tx, a.id); tx.db.pairedBag.id.update({ ...b, name: a.name.trim().replace(/\s+/g, ' ').slice(0, 30) || 'My bag' }); return acctState(tx);
+}));
+export const bagUnpair = spacetimedb.procedure({ id: t.u64() }, AccountState, (ctx, { id }) => ctx.withTx((tx) => {
+  const b = ownBag(tx, id); tx.db.pairedBag.id.delete(b.id); return acctState(tx);
+}));
+export const shopTrips = spacetimedb.procedure({ limit: t.u32() }, t.array(Receipt), (ctx, { limit }) => ctx.withTx((tx) => tripsOf(tx, limit)));
