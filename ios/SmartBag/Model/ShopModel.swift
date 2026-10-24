@@ -1,0 +1,225 @@
+// ShopModel.swift: the app-wide shopping session (port of Android ShopModel.kt).
+//
+// The database is the source of truth: every call returns the shopper's full priced bag, and payment
+// happens in the database the moment a location fix shows the shopper has left the store. There is
+// no Pay button. Calls go out strictly one at a time, in order, over the one WebSocket.
+
+import Foundation
+import Combine
+import CoreLocation
+import UIKit
+
+enum BagState: Equatable {
+    case off, searching
+    case connecting(String)
+    case connected(String)
+    case problem(String)
+
+    var isConnected: Bool { if case .connected = self { return true } else { return false } }
+    var isBusy: Bool {
+        switch self { case .searching, .connecting, .connected: return true; default: return false }
+    }
+}
+
+enum StoreState: Equatable {
+    case locating
+    case noLocation
+    case inStore(id: String, name: String, address: String, leaving: Bool)
+    case away(nearestName: String?, nearestDistance: Int?)
+    case offline(String)
+}
+
+struct Flash: Equatable { let sku: String; let n: Int }
+
+@MainActor
+final class ShopModel: ObservableObject {
+    static let shared = ShopModel()
+
+    @Published private(set) var bag: BagState = .off
+    @Published private(set) var store: StoreState = .locating
+    @Published private(set) var payment = ""
+    @Published private(set) var total = 0
+    @Published private(set) var count = 0
+    @Published private(set) var lines: [CartLine] = []
+    @Published private(set) var paid: Receipt?              // receipt to show after a walk-out
+    @Published private(set) var flash: Flash?
+    @Published private(set) var syncError: String?
+    @Published private(set) var preciseLocationOff = false
+
+    let api = SpacetimeClient(tokens: KeychainTokenStore())
+    private(set) var link: BagLink!
+    private(set) var location: PhoneLocation!
+
+    private var fix: CLLocation?
+    private var sentAt: CLLocation?
+    private var sentTime = Date.distantPast
+    private var locating = false
+    private var flashN = 0
+    private var ignoreFixesUntil = Date.distantPast
+    private var started = false
+    private let defaults = UserDefaults.standard
+
+    // Everything goes to the database strictly in order, one call at a time.
+    typealias Op = @MainActor () async throws -> Void
+    private let ops: AsyncStream<Op>.Continuation
+
+    var inStore: (id: String, name: String, address: String, leaving: Bool)? {
+        if case let .inStore(id, name, address, leaving) = store { return (id, name, address, leaving) }
+        return nil
+    }
+
+    private init() {
+        var c: AsyncStream<Op>.Continuation!
+        let stream = AsyncStream<Op>(bufferingPolicy: .unbounded) { c = $0 }
+        ops = c
+        link = BagLink(onLine: { [weak self] line in self?.onLine(line) },
+                       onState: { [weak self] s in self?.onBag(s) })
+        location = PhoneLocation(onFix: { [weak self] l in self?.onFix(l) },
+                                 onStatus: { [weak self] s in self?.onLocationStatus(s) })
+        Task { @MainActor [weak self] in
+            for await op in stream {
+                guard let self else { return }
+                do {
+                    try await op()
+                    self.syncError = nil
+                } catch {
+                    let message = (error as? LocalizedError)?.errorDescription ?? "Couldn't reach SmartBag."
+                    self.syncError = message
+                    if self.store == .locating { self.store = .offline(message) }
+                }
+            }
+        }
+        enqueue { [unowned self] in
+            var s = try await self.api.state()
+            if s.payment.isEmpty { s = try await self.api.setPayment(SmartBagConfig.demoPayment) }   // demo: no real card is stored
+            self.apply(s, fromLocation: false)
+        }
+    }
+
+    private func enqueue(_ op: @escaping Op) { ops.yield(op) }
+
+    /// Called after onboarding, and at every launch once onboarded (including background relaunches
+    /// for location or Bluetooth restoration).
+    func start() {
+        guard !started else { return }
+        started = true
+        Notify.shared.requestPermission()
+        location.start()
+        link.connect()
+    }
+
+    /// The app came to the foreground: pick up permission changes and refresh the bag.
+    func foreground() {
+        guard started else { return }
+        location.start()
+        if case .problem = bag { link.connect() }
+        if store == .noLocation || fix == nil { refreshStore() }
+        enqueue { [unowned self] in self.apply(try await self.api.state(), fromLocation: false) }
+    }
+
+    private func apply(_ s: CartState, fromLocation: Bool) {
+        payment = s.payment
+        if !s.storeId.isEmpty {
+            store = .inStore(id: s.storeId, name: s.storeName, address: s.storeAddress, leaving: s.leaving)
+        } else if fromLocation || (store != .locating && store != .noLocation) {
+            store = .away(nearestName: s.nearestName.isEmpty ? nil : s.nearestName, nearestDistance: s.nearestName.isEmpty ? nil : s.nearestM)
+        }
+        lines = s.lines.sorted { $0.addedMicros < $1.addedMicros }
+        total = s.totalCents
+        count = s.itemCount
+
+        // Receipts: show one only when the database has charged a NEW walk-out since we last looked.
+        let seen = (defaults.object(forKey: "seen_order") as? NSNumber)?.int64Value
+        let r = s.lastReceipt
+        let rid = Int64(bitPattern: r?.orderId ?? 0)
+        if let r, let seen, rid > seen {
+            paid = r
+            link.send("PAID \(r.code)")
+            Notify.shared.paid(r)
+            UINotificationFeedbackGenerator().notificationOccurred(r.isPaid ? .success : .warning)
+        }
+        if seen == nil || (r != nil && rid > (seen ?? 0)) { defaults.set(NSNumber(value: rid), forKey: "seen_order") }
+    }
+
+    var statusLine: String {
+        switch store {
+        case let .inStore(_, name, _, leaving):
+            if leaving { return "Leaving \(name)…" }
+            return count > 0 ? "\(name) · \(money(total)) in your bag · just walk out" : "Shopping at \(name)"
+        case .away: return "Not in a SmartBag store"
+        default: return "Watching your bag"
+        }
+    }
+
+    // MARK: bag
+
+    private func onBag(_ s: BagState) {
+        let before = bag
+        bag = s
+        if s.isConnected != before.isConnected {
+            let name: String
+            if case let .connected(n) = s { name = n } else { name = "" }
+            enqueue { [unowned self] in self.apply(try await self.api.setBag(name), fromLocation: false) }
+        }
+    }
+
+    func connectBag() { link.connect() }
+
+    private func onLine(_ raw: String) {
+        let ev = BagProtocol.parse(raw)
+        enqueue { [unowned self] in
+            self.apply(try await self.api.bagLine(raw), fromLocation: false)
+            guard let ev else { return }
+            if ev.op == "add" { self.flashN += 1; self.flash = Flash(sku: ev.sku, n: self.flashN) }
+            self.link.send(BagProtocol.ack(for: ev, in: self.lines))
+        }
+    }
+
+    func dismissLine(_ sku: String) {
+        enqueue { [unowned self] in self.apply(try await self.api.remove(sku: sku), fromLocation: false) }
+    }
+
+    /// Hidden demo aid (long-press the bag chip): behaves exactly as if the bag had read a random item.
+    func demoDrop() { onLine("+\(Int.random(in: 1001 ... 1016))@DEMO\(Int.random(in: 1000 ... 9999))") }
+
+    // MARK: location
+
+    private func onLocationStatus(_ s: PhoneLocation.Status) {
+        preciseLocationOff = (s == .reducedAccuracy)
+        if s == .denied, inStore == nil { store = .noLocation }
+    }
+
+    private func onFix(_ l: CLLocation) {
+        if Date() < ignoreFixesUntil { return }
+        fix = l
+        if store == .noLocation { store = .locating }
+        let age = Date().timeIntervalSince(sentTime)
+        // Inside a store we report often, so leaving is noticed within seconds.
+        let due = sentAt == nil || l.distance(from: sentAt!) > 10 || age > (inStore != nil ? 8 : 20)
+        if due { refreshStore() }
+    }
+
+    func refreshStore() {
+        guard let l = fix, !locating else { return }
+        locating = true
+        sentAt = l
+        sentTime = Date()
+        enqueue { [unowned self] in
+            defer { self.locating = false }
+            self.apply(try await self.api.locate(lat: l.coordinate.latitude, lng: l.coordinate.longitude,
+                                                 accuracy: max(0, l.horizontalAccuracy)), fromLocation: true)
+        }
+    }
+
+    /// Hidden demo aid (long-press the store name): reports two accurate fixes 300 m north of where the
+    /// phone is, exactly what walking out produces, then pauses real GPS for a minute.
+    func demoWalkOut() {
+        guard let l = fix else { return }
+        ignoreFixesUntil = Date().addingTimeInterval(60)
+        let lat = l.coordinate.latitude + 300.0 / 111_320.0, lng = l.coordinate.longitude
+        enqueue { [unowned self] in self.apply(try await self.api.locate(lat: lat, lng: lng, accuracy: 8), fromLocation: true) }
+        enqueue { [unowned self] in self.apply(try await self.api.locate(lat: lat + 0.0002, lng: lng, accuracy: 8), fromLocation: true) }
+    }
+
+    func finishReceipt() { paid = nil }
+}
