@@ -4,8 +4,8 @@ Static site for Bag It. No build step, no cookies, no analytics, no third-party 
 
 ```
 index.html          the page (inline CSS + SVG, small script: video play/pause, Android download button)
-media/screens/      phone screenshots, iPhone and Android (see Screenshots below)
-tools/              make-screens.py: rebuilds media/screens from app renders (not deployed)
+media/screens/      phone screens for the Get the app preview, iPhone and Android (see Screenshots below)
+tools/              make-screens.py: the page list; rebuilds media/screens and the PAGES array (not deployed)
 brand/              logo, mark, favicon, touch icon, OG image, brand.md
 media/              product film + app demo recordings (see media/README.md)
 downloads/          bag-it.apk (Android app; stable name, replace the file to update)
@@ -27,17 +27,17 @@ Content rules: only true statements. Payments are simulated during early access;
 Publish only the files in the ZIP built from this folder: index.html, 404.html, _headers, _redirects, brand/{favicon.svg,favicon-32.png,apple-touch-icon.png,og-image.jpg,logo.svg,mark.svg}, media/* (including media/screens/*.webp), downloads/*.apk. `_redirects` hides the internal docs if the whole folder is deployed.
 
 ## Screenshots (swap point)
-"Get the app" shows the iPhone and Android apps as equals, each with the same two screens (Shopping, Receipt) so they can be compared. Light and dark versions switch with the visitor's theme.
+"Get the app" is one phone preview plus a platform selector. Page tabs above the phone (and the arrows, swipe, arrow keys) browse the app's screens; the Android | iPhone selector below picks the platform, which drives both the phone (same page, other platform) and the panel under it (Android: download + QR; iPhone: not available yet). Default platform: iPhone for iOS user agents and for links to `#get-iphone`, otherwise Android. Without JavaScript the page shows the first screen (Android) and both panels.
 
-- Files: `media/screens/{android,ios}-{shop,receipt}[-dark].webp`, 480 px wide (about 2x display size), about 20 KB each, lazy-loaded.
-- Source list: `SCREENS` at the top of `tools/make-screens.py` (one source PNG per slot). To swap: point the slots at the new renders and run `python3 tools/make-screens.py`. File names stay the same, so index.html needs no change unless:
-  - a screen's aspect ratio changes: update `width`/`height` on its `<img>`;
-  - a screen shows something else: update its `alt` text and caption.
-- In index.html every screenshot sits between `<!-- SCREENS (swap point) -->` and `<!-- /SCREENS -->` (one block per platform). To show a different state, change both platforms' blocks together.
-- Current sources: iPhone 1.1 reference renders (`/cloudspace/smartbag/ios-ui/final/11-filling, 13-receipt-paid, 15-filling-dark, 16-receipt-dark`), Android 3.1 renders (`/cloudspace/smartbag/android-ui/final/411-{light,dark}/09-filling, 11-receipt-paid`). The iPhone screens are previews, so the page says "The iPhone screens are previews of the app in development." under the platforms. Remove that sentence once the iPhone screens come from a real build.
+- **One page list:** `PAGES` at the top of `tools/make-screens.py` (id, tab label, platform-neutral alt text, Android render, iPhone render, optional dark render per platform) plus `START` (first page shown). Run `python3 tools/make-screens.py`. It writes `media/screens/<android|ios>-<id>[-dark].webp` (560 px wide, about 20 KB), regenerates the `PAGES` data array in index.html (between `/* PAGES (generated` and `/* /PAGES */`) and the no-JavaScript first screen (between `<!-- FIRST SCREEN -->` markers), and deletes stale files. Order of the list = order of the tabs.
+- **Adding pages** (Sign up, Shop, Trips, Wallet, Account, Pair your bag when Android 3.2 / iPhone 1.2 land): append entries with a render for BOTH platforms. A page that exists on only one platform can't be in the tour.
+- **Dark mode:** Android has a full dark set, so its screens follow the visitor's theme. iPhone dark renders exist for only two pages, so the iPhone tour stays light in both themes rather than switching mid-tour; add `ios` dark renders when a full set exists.
+- Android renders have a placeholder status-bar clock in the top-left corner; the tool blanks that strip (`BLANK_TOP`) because the phone frame's rounded corner would cut it.
+- Current sources: iPhone 1.1 reference renders (`/cloudspace/smartbag/ios-ui/final/`, HTML mirror, so the page says "The iPhone screens are previews of the app in development." whenever iPhone is selected; remove that once screens come from a real build) and Android 3.1 renders (`/cloudspace/smartbag/android-ui/final/411-light|411-dark`).
+- If the screens change size, keep `WIDTH`/`HEIGHT` in the tool and the `aspect-ratio` of `.screen` in index.html in step.
 
 ## iPhone availability
-There is no App Store or TestFlight build: the page says "Coming soon to the App Store" with no badge or link. When the app is live, replace the `<p class="soon">` in `#get-iphone` with the App Store link, and update the hero fine print, the meta description, the FAQ "Which phones does it work with?" and the iPhone script branch at the bottom of index.html.
+There is no App Store or TestFlight build: the iPhone panel says "The iPhone app isn’t available to download yet. It’s coming to the App Store." with no badge or link. When the app is live, replace the `<p class="plain">` in the `#get-iphone` panel with the App Store link, and update the hero fine print, the meta description, the FAQ "Which phones does it work with?" and the iPhone script branch at the bottom of index.html.
 
 ## When accounts, Wallet and pairing ship (prepared, not on the page yet)
 These features are not in the released apps yet, so the page does not mention them. When they ship:
@@ -46,4 +46,4 @@ These features are not in the released apps yet, so the page does not mention th
 3. "Will I be charged?" says no card is ever entered. If the Wallet lets people save cards, say how they're used during early access (still simulated?).
 4. Optional setup line, ready to paste under the Get the app intro (`.head`), only once all three steps are real in both apps:
    `<p class="label" style="margin-top:20px">Set up in a minute</p><ol class="steps">…</ol>` with three items: "Create your account", "Pair your bag", "Add a card". The `.steps` style from How it works can be reused.
-5. Swap the screenshots (above) for the new screens.
+5. Add the new screens to `PAGES` (above).
