@@ -45,6 +45,19 @@ class ShopModel(private val app: Application) {
     var tripsError by mutableStateOf<String?>(null); private set
     var tripsLoading by mutableStateOf(false); private set
     var pairing by mutableStateOf<PairUi?>(null); private set
+    /** Server push for this phone; null until asked. Without FCM in the build, only push_status is used. */
+    var push by mutableStateOf<PushState?>(null); private set
+    /** A receipt a notification asked to open (tap routing). */
+    var openReceipt by mutableStateOf<String?>(null)
+    val notifPrefs = NotifPrefs(app)
+    var notifVersion by mutableStateOf(0); private set          // bumps when a notification switch changes (UI re-reads prefs)
+    // Store id of the current visit (arrival notifies once); persisted so a process restart in the store doesn't repeat it.
+    private var visit: String? = app.getSharedPreferences("smartbag", 0).getString("visit_store", null)
+        set(v) { field = v; app.getSharedPreferences("smartbag", 0).edit().putString("visit_store", v).apply() }
+    var geofencesOk by mutableStateOf(Geofences.ok(app)); private set
+    @Volatile var geoWoken = false                               // this session was started by a geofence, not by the shopper
+    private var awaySince = 0L
+    private var bagCheck = 0
     var store by mutableStateOf<StoreState>(StoreState.Locating); private set
     var payment by mutableStateOf(""); private set
     var total by mutableStateOf(0); private set
@@ -93,7 +106,64 @@ class ShopModel(private val app: Application) {
         val (a, raw) = Api.accountState()
         setAccount(a, raw)
         apply(Api.current(), fromLocation = false)
+        if (a.signedIn) syncPush()
     }
+
+    // ---------------------------------------------------------------- push + geofences
+
+    /** Register this phone for server push (if this build has FCM) or just read the server's push state. */
+    fun syncPush() {
+        val fetch = PushHooks.tokenFetcher
+        if (account?.signedIn != true) return
+        if (fetch == null) { ops.trySend { push = try { Api.pushStatus() } catch (_: Exception) { push } }; return }
+        fetch { token -> if (token != null) onPushToken(token) else ops.trySend { push = try { Api.pushStatus() } catch (_: Exception) { push } } }
+    }
+
+    /** A new FCM token (first launch, refresh). Cheap and idempotent on the server. */
+    fun onPushToken(token: String) {
+        scope.launch {
+            if (account?.signedIn != true) return@launch
+            ops.trySend { push = try { Api.pushRegister(token, notifPrefs.serverPrefs()) } catch (_: Exception) { push } }
+        }
+    }
+
+    fun setNotif(k: NotifKind, on: Boolean) {
+        notifPrefs.set(k, on); notifVersion++
+        if (k == NotifKind.Bag && !on) Notify.cancelBag(app)
+        if (k == NotifKind.Store && !on) Notify.cancelArrival(app)
+        if ((k == NotifKind.Trips || k == NotifKind.Security) && push?.registered == true)
+            ops.trySend { push = try { Api.pushSetPrefs(notifPrefs.serverPrefs()) } catch (_: Exception) { push } }
+    }
+
+    /** Test: through the server when this phone is registered and the server can push; otherwise a local one. */
+    fun sendTest(done: (String) -> Unit) {
+        val p = push
+        if (p != null && p.registered && p.serverPush) {
+            ops.trySend {
+                val r = try { Api.pushTest() } catch (e: Exception) { friendly(e) }
+                done(if (r.startsWith("sent 1/1")) "Sent. It should arrive in a few seconds." else "The server couldn't send it ($r). Here's one from this phone.")
+                if (!r.startsWith("sent 1/1")) Notify.test(app)
+            }
+        } else { Notify.test(app); done("Sent from this phone.") }
+    }
+
+    private var geoAt = 0L
+    private var geoFix: Location? = null
+    /** Keep geofences around the nearest stores (every 15 min or 1 km), only with "Allow all the time". */
+    private fun maybeRefreshGeofences(l: Location, force: Boolean = false) {
+        if (account?.signedIn != true || !Geofences.hasBackground(app)) return
+        val last = geoFix
+        if (!force && last != null && System.currentTimeMillis() - geoAt < 15 * 60_000L && l.distanceTo(last) < 1000f) return
+        geoAt = System.currentTimeMillis(); geoFix = l
+        ops.trySend {
+            try {
+                val s = Api.nearbyStores(l.latitude, l.longitude, 20)
+                Geofences.save(app, s)
+                Geofences.register(app, s) { ok -> geofencesOk = ok; if (!ok) geoAt = 0L }
+            } catch (_: Exception) { geoAt = 0L }                    // offline: try again on the next fix, not in 15 min
+        }
+    }
+    fun refreshGeofences() { fix?.let { maybeRefreshGeofences(it, force = true) } ?: Geofences.register(app) { geofencesOk = it } }
 
     /** Try again: re-read the account and the bag, then re-check the store. */
     fun retry() { bootstrap(); refreshStore() }
@@ -123,7 +193,10 @@ class ShopModel(private val app: Application) {
             payment = ""
             if (wasIn) signedOutHere()
         }
+        // v5.2 clears the bag name on every account change: send it again after sign-in / sign-up.
+        if (a.signedIn && !wasIn) sentBag = null
         applyBags(a)
+        if (a.signedIn && !wasIn) { syncPush(); fix?.let { maybeRefreshGeofences(it, force = true) } }
     }
 
     /** Signed out (here, on another phone's delete, or after delete): forget the bag and stop watching for walk-outs. */
@@ -138,6 +211,11 @@ class ShopModel(private val app: Application) {
         link.disconnect()
         location.stop()
         WatchService.stop(app)
+        Geofences.clear(app)                 // a signed-out phone isn't woken by stores
+        geofencesOk = null
+        push = null; visit = null; openReceipt = null
+        Notify.clearAccount(app)             // the next person on this phone can't open the previous account's receipts
+        Notify.cancelBag(app); Notify.cancelArrival(app)
         lines.clear(); total = 0; count = 0
     }
 
@@ -188,7 +266,17 @@ class ShopModel(private val app: Application) {
     private var sentBag: String? = null
     private fun updateBag() {
         val now = if (linkBag !is BagState.Connected && demoOnly) BagState.Connected("Demo bag") else linkBag
+        val was = bag
         bag = now
+        // Bag alert: disconnected for 20 s in a store with items, and Bag It not on screen. Reconnecting clears it.
+        if (now is BagState.Connected) Notify.cancelBag(app)
+        else if (was is BagState.Connected && pairing == null) {
+            val n = ++bagCheck
+            scope.launch {
+                delay(20_000)
+                if (n == bagCheck && NotifyRules.warnBag(bag is BagState.Connected, store is StoreState.InStore, count, foreground)) Notify.bagLost(app)
+            }
+        }
         // Tell the database which bag is shopping, but not about a bag that is only being checked during pairing.
         val name = (now as? BagState.Connected)?.name ?: ""
         if (pairing == null && account?.signedIn == true && name != sentBag) { sentBag = name; ops.trySend { apply(Api.setBag(name), false) } }
@@ -272,11 +360,22 @@ class ShopModel(private val app: Application) {
             paid = r
             // The bag's light says "paid" only when it really was; a payment-due trip leaves it dark.
             if (r.status == "paid") link.send("PAID ${r.code}")
-            if (!foreground) Notify.paid(app, r)
+            // In the foreground the receipt is on screen; still claim the code so a server push can't repeat it.
+            if (!foreground) Notify.receipt(app, r) else Notify.claim(app, r.code)
             trips?.let { t -> trips = listOf(r) + t.filter { it.id != r.id } }
         }
         if (r != null && r.id > seen || seen < 0) prefs.edit().putLong("seen_order", r?.id ?: 0L).apply()
         if (serviceRunning || !watching) Notify.status(app, statusLine())
+        // Store arrival: once per visit, only when Bag It isn't on screen.
+        val (v, arrive) = NotifyRules.arrival(visit, store, foreground)
+        if (v != visit && v == null) Notify.cancelArrival(app)
+        if (v != visit) visit = v
+        if (arrive && account?.signedIn == true) (store as? StoreState.InStore)?.let { Notify.arrival(app, it.name, payment) }
+        // A session Android started from a geofence ends after 10 min away from any store with Bag It closed.
+        if (store is StoreState.Away) { if (awaySince == 0L) awaySince = System.currentTimeMillis() } else awaySince = 0L
+        if (geoWoken && !foreground && awaySince > 0 && System.currentTimeMillis() - awaySince > 10 * 60_000L) {
+            geoWoken = false; location.stop(); WatchService.stop(app)
+        }
     }
 
     fun statusLine(): String = if (!watching) "Bag It paused. Open the app to keep watching for your walk-out." else when (val s = store) {
@@ -302,6 +401,7 @@ class ShopModel(private val app: Application) {
     private fun onFix(l: Location) {
         if (System.currentTimeMillis() < ignoreFixesUntil) return
         fix = l
+        maybeRefreshGeofences(l)
         if (store is StoreState.NoLocation) store = StoreState.Locating
         val q = sentAt
         val age = System.currentTimeMillis() - sentTime

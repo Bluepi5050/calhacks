@@ -20,6 +20,13 @@ class MainActivity : ComponentActivity() {
     private val model: ShopModel get() = (application as SmartBagApp).shop
     private val prefs by lazy { getSharedPreferences("smartbag", 0) }
     private var perms by mutableStateOf(Perms(false, false, false, false))
+    private var notifSystem by mutableStateOf(true)
+
+    // Android 10+: "Allow all the time" is its own request, only after the foreground grant (11+ opens a settings page).
+    private val backgroundAsk = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+        refreshPerms(); if (perms.background) model.refreshGeofences()
+    }
+    private val notifAsk = registerForActivityResult(ActivityResultContracts.RequestPermission()) { refreshPerms() }
 
     private val signedIn get() = model.account?.signedIn == true
 
@@ -57,7 +64,9 @@ class MainActivity : ComponentActivity() {
             // After two denials Android stops showing the prompt; then only Settings can help.
             // (a dismissed dialog also clears the rationale flag, so allow at least two asks before sending people to Settings)
             canAskAgain = missing.isEmpty() || prefs.getInt("ask_count", 0) < 2 || missing.any { shouldShowRequestPermissionRationale(it) },
+            background = fine && (Build.VERSION.SDK_INT < 29 || has(Manifest.permission.ACCESS_BACKGROUND_LOCATION)),
         )
+        notifSystem = Notify.enabled(this)
     }
 
     private fun startLocation() {
@@ -119,14 +128,46 @@ class MainActivity : ComponentActivity() {
         override fun pair(bleName: String, name: String, done: (String?) -> Unit) = model.pair(bleName, name, done)
         override fun pairDemo(done: (String?) -> Unit) = model.pairDemo(done)
         override fun endPairing() = model.endPairing()
+        override fun setNotif(k: NotifKind, on: Boolean) = model.setNotif(k, on)
+        override fun sendTest(done: (String) -> Unit) = model.sendTest(done)
+        override fun consumeOpenReceipt() { model.openReceipt = null }
+        override fun allowNotifications() {
+            // Android 13+: ask once in-app; after a denial (or below 13) only the app's notification settings can help.
+            if (Build.VERSION.SDK_INT >= 33 && !has(Manifest.permission.POST_NOTIFICATIONS) && !prefs.getBoolean("asked_notifications", false)) {
+                prefs.edit().putBoolean("asked_notifications", true).apply(); notifAsk.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else try {
+                startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
+            } catch (_: Exception) { appSettings() }
+        }
+        override fun allowBackground() {
+            if (!has(Manifest.permission.ACCESS_FINE_LOCATION)) { permissionAsk.launch(askList()); return }
+            if (Build.VERSION.SDK_INT >= 29 && !prefs.getBoolean("asked_background", false)) {
+                prefs.edit().putBoolean("asked_background", true).apply()
+                backgroundAsk.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            } else appSettings()          // Android won't show the prompt again: Settings › Location › Allow all the time
+        }
+    }
+
+    /** A notification was tapped: a receipt to open (local: open_receipt; server push: data code + type). */
+    private fun handle(intent: Intent?) {
+        val i = intent ?: return
+        val code = i.getStringExtra(Notify.EXTRA_RECEIPT)
+            ?: i.getStringExtra("code")?.takeIf { i.getStringExtra("type") in setOf("trip", "payment_due") }
+        if (!code.isNullOrBlank() && Geofences.signedIn(this)) model.openReceipt = code
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handle(intent)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         refreshPerms()
+        if (savedInstanceState == null) handle(intent)
         setContent {
-            BagItTheme { AppRoot(model.appUi(perms), actions) }
+            BagItTheme { AppRoot(model.appUi(perms, notifSystem), actions) }
         }
         if (perms.ready && signedIn && savedInstanceState == null) { startLocation(); connectBag() }
     }
@@ -140,7 +181,9 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         (application as SmartBagApp).foreground = true
         val wasReady = perms.ready
+        val wasBackground = perms.background
         refreshPerms()                         // the user may be back from Settings
+        if (perms.background && !wasBackground && signedIn) model.refreshGeofences()
         if (perms.ready && signedIn) {
             if (!wasReady) connectBag()
             if (model.location.enabled && model.store is StoreState.NoLocation) model.refreshStore()
@@ -156,9 +199,11 @@ fun ShopModel.ui(): ShopUi {
         noBag = a != null && a.bags.isEmpty(), noCard = a != null && a.cards.isEmpty())
 }
 
-fun ShopModel.appUi(perms: Perms) = AppUi(
+fun ShopModel.appUi(perms: Perms, notifSystem: Boolean = true) = AppUi(
     shop = ui(), account = account ?: SIGNED_OUT, perms = perms,
     trips = trips, tripsLoading = tripsLoading, tripsError = tripsError, pairing = pairing,
     connectedBag = (bag as? BagState.Connected)?.name?.takeIf { !demoStandIn }, version = BuildConfig.VERSION_NAME,
     demoActive = demoStandIn,
+    notif = notifVersion.let { notifPrefs.all() }, notifSystem = notifSystem, push = push, pushBuild = BuildConfig.FCM || PushHooks.available,
+    openReceipt = openReceipt, geofencesOk = geofencesOk,
 )

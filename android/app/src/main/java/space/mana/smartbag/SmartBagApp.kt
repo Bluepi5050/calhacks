@@ -8,5 +8,7 @@ class SmartBagApp : Application() {
     override fun onCreate() {
         super.onCreate()
         Notify.channels(this)
+        // Server push only exists in builds made with google-services.json (the fcm source set).
+        if (BuildConfig.FCM) try { Class.forName("space.mana.smartbag.fcm.FcmBridge").getMethod("install").invoke(null) } catch (_: Exception) {}
     }
 }

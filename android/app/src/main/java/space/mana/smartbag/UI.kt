@@ -336,6 +336,7 @@ internal fun EdgeLine(fill: Float, color: Color) {
 data class Perms(
     val nearby: Boolean, val location: Boolean, val notifications: Boolean, val asked: Boolean,
     val approximate: Boolean = false, val canAskAgain: Boolean = true,
+    val background: Boolean = false,       // "Allow all the time" (geofences wake Bag It while it's closed)
 ) {
     val ready get() = nearby && location
 }
@@ -968,7 +969,7 @@ fun ReceiptScreen(r: Receipt, peak: Boolean, onDone: () -> Unit, minBar: Dp = 0.
         else "Paid ${money(r.total)} as you left ${r.storeName}.") + " $time." + (if (r.payment.isNotEmpty()) " ${r.payment}." else "") + " Exit code ${r.code.toCharArray().joinToString(" ")}."
     LaunchedEffect(r.id) {
         if (!peak || played) return@LaunchedEffect
-        Notify.cancelPaid(ctx)
+        Notify.cancelReceipt(ctx, r.code)
         view.announceForAccessibility(summary)
         if (!reduce) {
             delay(300)                                                  // let the cross-fade land, so the line is seen completing

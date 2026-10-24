@@ -142,6 +142,12 @@ class ScreenshotTest {
         "44-bag-sheet" to { val u = app(ui(bay)); Host(u, { BagSheet(myBag, { _, _ -> }, { }, {}) }) { MainTabs(u, nop, initialTab = 3) } },
         "45-delete-account" to { val u = app(ui(bay)); Host(u, { DeleteSheet(nop, {}) }) { MainTabs(u, nop, initialTab = 3) } },
         "46-tabs-walkout-to-receipt" to { TabsFlip() },
+        // ---- 3.3: notifications
+        "49-notifications" to { NotificationsScreen(app(ui(bay)).copy(perms = perms.copy(background = true), push = PushState(false, false, "")), nop, {}) },
+        "50-notifications-off" to { NotificationsScreen(app(ui(bay)).copy(notifSystem = false,
+            notif = NotifKind.values().associateWith { it != NotifKind.Store }), nop, {}) },
+        "51-notifications-server-push" to { NotificationsScreen(app(ui(bay)).copy(perms = perms.copy(background = true), pushBuild = true,
+            push = PushState(true, true, "trips,security")), nop, {}, previewResult = "Sent. It should arrive in a few seconds.") },
         "48-add-card-only-step" to { androidx.compose.runtime.CompositionLocalProvider(LocalSetupProgress provides (1 to 1)) { AddCardScreen(true, 3, null, {}, { _, _ -> }, {}) } },
         "47-trip-receipt" to { val u = app(ui(bay), trips = trips); Host(u) { MainTabs(u, nop, initialTab = 1, initialReview = trips[2]) } },
     )

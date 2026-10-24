@@ -44,6 +44,12 @@ data class AppUi(
     val trips: List<Receipt>? = null, val tripsLoading: Boolean = false, val tripsError: String? = null,
     val pairing: PairUi? = null, val connectedBag: String? = null, val version: String = "",
     val demoActive: Boolean = false,      // the demo bag is standing in for a real one (counts as connected)
+    val notif: Map<NotifKind, Boolean> = NotifKind.values().associateWith { true },
+    val notifSystem: Boolean = true,      // Android lets Bag It post notifications at all
+    val push: PushState? = null,          // server push state (null = unknown / offline)
+    val pushBuild: Boolean = false,       // this APK includes FCM (built with google-services.json)
+    val openReceipt: String? = null,      // a notification asked to open this receipt
+    val geofencesOk: Boolean? = null,     // Android accepted the store geofences (null = not tried yet)
 )
 
 interface AppActions : ShopActions {
@@ -67,6 +73,12 @@ interface AppActions : ShopActions {
     fun pair(bleName: String, name: String, done: (String?) -> Unit) {}
     fun pairDemo(done: (String?) -> Unit) {}
     fun endPairing() {}
+    fun setNotif(k: NotifKind, on: Boolean) {}
+    fun sendTest(done: (String) -> Unit) {}
+    fun allowNotifications() {}
+    fun allowBackground() {}
+    fun openNotifications() {}
+    fun consumeOpenReceipt() {}
 }
 
 enum class Step { Perms, Pair, Card }
@@ -105,11 +117,14 @@ fun AppRoot(ui: AppUi, actions: AppActions, nav: Nav = rememberSaveable(saver = 
     LaunchedEffect(signedIn) { if (!signedIn) { nav.reset(); sheets.hide() } }
     // A walk-out charge always wins: close overlays so the receipt (on Shop) is what the shopper sees.
     LaunchedEffect(ui.shop.paid?.id) { if (ui.shop.paid != null) { nav.overlay = null; sheets.hide() } }
+    // A tapped receipt notification: close overlays; MainTabs opens the receipt.
+    LaunchedEffect(ui.openReceipt) { if (ui.openReceipt != null && signedIn) { nav.overlay = null; sheets.hide() } }
     // Navigation actions the screens ask for (open pairing, add a card, card picker) are handled here.
     val a = remember(actions, nav, sheets) {
         object : AppActions by actions {
             override fun openPairing() { nav.overlay = "pair" }
             override fun openAddCard() { sheets.hide(); nav.overlay = "card" }
+            override fun openNotifications() { nav.overlay = "notifications" }
             override fun chooseCard() { sheets.show { CardPickerSheet(LocalAppUi.current!!.account, onPick = { c, done -> actions.setDefaultCard(c.id, done) },
                 onAdd = { sheets.hide(); nav.overlay = "card" }, onClose = sheets::hide) } }
         }
@@ -121,6 +136,10 @@ fun AppRoot(ui: AppUi, actions: AppActions, nav: Nav = rememberSaveable(saver = 
                 nav.setup.isNotEmpty() && ui.shop.paid == null -> SetupStep(nav, ui, a)
                 !ui.perms.ready -> PermissionsScreen(ui.perms, onContinue = a::askPermissions, onSettings = a::appSettings)
                 nav.overlay == "pair" -> PairFlow(ui, a, setup = false) { nav.overlay = null }
+                nav.overlay == "notifications" -> {
+                    BackHandler { nav.overlay = null }
+                    NotificationsScreen(ui, a, onBack = { nav.overlay = null })
+                }
                 nav.overlay == "card" -> {
                     BackHandler { nav.overlay = null }
                     AddCardScreen(ui.account.cards.isEmpty(), null, onBack = { nav.overlay = null }, onLater = null,
@@ -189,6 +208,21 @@ fun MainTabs(ui: AppUi, a: AppActions, initialTab: Int = 0, initialReview: Recei
     var review by remember { mutableStateOf(initialReview) }
     // A walk-out charge always lands on Shop, where the receipt peak lives.
     LaunchedEffect(ui.shop.paid?.id) { if (ui.shop.paid != null) { tab = 0; review = null; sheets.hide() } }
+    // Receipt notification tapped: open that receipt (from Trips, loading them if needed). The receipt that is
+    // just being shown live on Shop needs nothing more.
+    var reloaded by remember(ui.openReceipt) { mutableStateOf(false) }
+    LaunchedEffect(ui.openReceipt, ui.trips, ui.tripsLoading) {
+        val code = ui.openReceipt ?: return@LaunchedEffect
+        if (ui.tripsLoading) return@LaunchedEffect                  // wait for the reload to land
+        if (ui.shop.paid?.code == code) { tab = 0; a.consumeOpenReceipt(); return@LaunchedEffect }
+        val r = ui.trips?.firstOrNull { it.code == code } ?: ui.shop.lastTrip?.takeIf { it.code == code }
+        when {
+            r != null -> { tab = 1; review = r; a.consumeOpenReceipt() }
+            ui.trips == null -> { tab = 1; a.loadTrips() }
+            !reloaded -> { reloaded = true; tab = 1; a.loadTrips() }   // a trip from another phone: not in the cached list yet
+            else -> { tab = 1; a.consumeOpenReceipt() }           // not in the last 50 trips: Trips is the best we can do
+        }
+    }
     val navBottom = with(LocalDensity.current) { WindowInsets.navigationBars.getBottom(this).toDp() }
     val inset = TabBarHeight + navBottom
     val full = (tab == 0 && shopFull) || review != null
@@ -356,6 +390,12 @@ fun AccountScreen(ui: AppUi, a: AppActions, bottomInset: Dp) {
             ListRow("Pair a bag", icon = Glyph.plus, onClick = a::openPairing)
             Hairline()
             Spacer(Modifier.height(32.dp))
+            Hairline()
+            val on = ui.notif.count { it.value }
+            ListRow("Notifications", if (!ui.notifSystem) "Off in Android settings" else if (on == 0) "All off" else if (on == 4) "All on" else "$on of 4 on",
+                icon = Glyph.bell, chevron = true, subColor = if (!ui.notifSystem) p.bad else null, onClick = a::openNotifications)
+            Hairline()
+            Spacer(Modifier.height(32.dp))
             Eyebrow("Permissions")
             Spacer(Modifier.height(8.dp))
             Hairline()
@@ -365,7 +405,8 @@ fun AccountScreen(ui: AppUi, a: AppActions, bottomInset: Dp) {
                 Hairline()
             }
             perm("Nearby devices", Glyph.nearby, ui.perms.nearby, if (ui.perms.nearby) "Allowed" else "Off")
-            perm("Location", Glyph.location, ui.perms.location, if (ui.perms.location) "Precise" else if (ui.perms.approximate) "Approximate" else "Off")
+            perm("Location", Glyph.location, ui.perms.location,
+                if (ui.perms.location) (if (ui.perms.background) "All the time" else "While using") else if (ui.perms.approximate) "Approximate" else "Off")
             perm("Notifications", Glyph.bell, true, if (ui.perms.notifications) "Allowed" else "Off")
             Spacer(Modifier.height(32.dp))
             Hairline()
@@ -444,4 +485,72 @@ fun DeleteSheet(a: AppActions, onClose: () -> Unit) {
     BusyPill("Delete account", busy, primary = false, danger = true) { go() }
     Spacer(Modifier.height(8.dp))
     TextAction("Cancel", Modifier.fillMaxWidth(), enabled = !busy, onClick = onClose)
+}
+
+// ---------------------------------------------------------------- Account › Notifications
+
+/** Server push in plain words. Never promises delivery. */
+fun pushLine(build: Boolean, push: PushState?): String = when {
+    !build -> "Trips charged on your other phones and new sign-ins can't reach this phone yet. This version of Bag It shows what this phone sees."
+    push == null -> "Checking…"
+    !push.serverPush -> "Server notifications aren't turned on yet, so trips on your other phones won't show here."
+    push.registered -> "On. Trips on your other phones and new sign-ins can reach this phone."
+    else -> "This phone isn't registered yet. Bag It tries again when it starts."
+}
+
+@Composable
+fun NotificationsScreen(ui: AppUi, a: AppActions, onBack: () -> Unit, previewResult: String? = null) {
+    val p = LocalPalette.current
+    var busy by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf(previewResult) }
+    val serverReady = ui.pushBuild && ui.push?.serverPush == true && ui.push.registered
+    Column(Modifier.fillMaxSize().background(p.bg)) {
+        TopBar(onBack)
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp)) {
+            Spacer(Modifier.height(8.dp))
+            ScreenTitle("Notifications", "When a trip is charged, when you walk into a store, and if your bag drops off.")
+            if (!ui.notifSystem) {
+                Spacer(Modifier.height(24.dp))
+                Txt("Notifications are off for Bag It in Android settings, so none of these can show.", Type.body, p.bad)
+                Spacer(Modifier.height(12.dp))
+                Pill("Turn on notifications", Modifier.fillMaxWidth(), onClick = a::allowNotifications)
+            }
+            Spacer(Modifier.height(32.dp))
+            Eyebrow("Notify me about")
+            Spacer(Modifier.height(8.dp))
+            Hairline()
+            val row = @Composable { k: NotifKind, title: String, sub: String ->
+                InkSwitch(ui.notif[k] != false, title, sub, enabled = ui.notifSystem) { a.setNotif(k, it) }
+                Hairline()
+            }
+            row(NotifKind.Trips, "Trips and receipts", "When a trip is charged, or payment is due.")
+            row(NotifKind.Store, "Store arrivals", "When you walk into a Bag It store.")
+            row(NotifKind.Bag, "Bag alerts", "If your bag disconnects while you shop.")
+            row(NotifKind.Security, "Account security", if (serverReady) "New sign-ins and cards added on another phone." else "New sign-ins and cards added on another phone. Needs server notifications.")
+            Spacer(Modifier.height(32.dp))
+            Eyebrow("While Bag It is closed")
+            Spacer(Modifier.height(8.dp))
+            Hairline()
+            val word = if (ui.perms.background) "Allowed" else if (ui.perms.location) "While using" else "Off"
+            ListRow("Location all the time",
+                if (!ui.perms.background) "Without it, keep Bag It open while you leave a store."
+                else if (ui.geofencesOk == false) "Bag It couldn't set this up yet. Check that location is on, then open Bag It near a store."
+                else "Bag It can notice you walk into or out of a store while it's closed.",
+                icon = Glyph.location, trailing = word, trailingColor = if (ui.perms.background) null else p.bad, chevron = !ui.perms.background,
+                description = "Location all the time, $word", onClick = if (ui.perms.background) null else a::allowBackground)
+            Hairline()
+            Spacer(Modifier.height(12.dp))
+            Txt("Android can delay this, and after you force-stop Bag It nothing runs until you open it again.", Type.caption, p.faint)
+            Spacer(Modifier.height(32.dp))
+            Eyebrow("From your other phones")
+            Spacer(Modifier.height(8.dp))
+            Txt(pushLine(ui.pushBuild, ui.push), Type.body, p.muted)
+            Spacer(Modifier.height(32.dp))
+            ErrorLine(null)
+            BusyPill("Send a test notification", busy, primary = false) { busy = true; result = null; a.sendTest { r -> busy = false; result = r } }
+            if (result != null) { Spacer(Modifier.height(8.dp)); Txt(result!!, Type.caption, p.muted, modifier = Modifier.semantics { contentDescription = result!! }) }
+            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.navigationBarsPadding())
+        }
+    }
 }

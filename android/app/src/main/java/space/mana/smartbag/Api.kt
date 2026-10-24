@@ -54,6 +54,10 @@ data class AccountState(
     val firstName: String get() = name.trim().split(' ').firstOrNull().orEmpty()
 }
 const val DEMO_BAG = "DEMO"
+/** Server push state for this phone (module v5.1). [serverPush] = the database has an FCM project configured. */
+data class PushState(val serverPush: Boolean, val registered: Boolean, val prefs: String)
+/** A store near the phone, for background geofences. */
+data class NearbyStore(val id: String, val name: String, val address: String, val lat: Double, val lng: Double, val radiusM: Int, val distanceM: Int)
 val SIGNED_OUT = AccountState(false, "", "", emptyList(), emptyList(), "")
 
 class ApiException(message: String) : Exception(message)
@@ -84,6 +88,7 @@ class Br(private val b: ByteArray, start: Int = 0) {
     fun u8() = buf.get().toInt() and 0xff
     fun u32() = buf.int
     fun i64() = buf.long
+    fun f64() = buf.double
     fun bool() = u8() != 0
     fun raw(n: Int) = ByteArray(n).also { buf.get(it) }
     fun str() = String(raw(u32()))
@@ -259,4 +264,19 @@ object Api {
     suspend fun bagRename(id: Long, name: String) = accountRaw("bag_rename", Bw().u64(id).str(name).done())
     suspend fun bagUnpair(id: Long) = accountRaw("bag_unpair", Bw().u64(id).done())
     suspend fun trips(limit: Int = 50): List<Receipt> = decodeTrips(call("shop_trips", Bw().u32(limit).done()))
+
+    // ---- push + geofencing (module v5.1)
+    internal fun decodePush(b: ByteArray): PushState = whole(b) { r -> PushState(r.bool(), r.bool(), r.str()) }
+    internal fun decodeNearby(b: ByteArray): List<NearbyStore> = whole(b) { r ->
+        List(r.u32()) { NearbyStore(r.str(), r.str(), r.str(), r.f64(), r.f64(), r.u32(), r.u32()) }
+    }
+    internal fun decodeString(b: ByteArray): String = whole(b) { it.str() }
+    /** [prefs] = comma list of server categories ("trips,security"). Signed-in phones only. */
+    suspend fun pushRegister(token: String, prefs: String) = decodePush(call("push_register", Bw().str("android").str(token).str(prefs).done()))
+    suspend fun pushSetPrefs(prefs: String) = decodePush(call("push_set_prefs", Bw().str(prefs).done()))
+    suspend fun pushUnregister() = decodePush(call("push_unregister", none))
+    suspend fun pushStatus() = decodePush(call("push_status", none))
+    /** What the server did: "sent 1/1", "push not configured", "not registered", or an error. Never proof of delivery. */
+    suspend fun pushTest() = decodeString(call("push_test", none))
+    suspend fun nearbyStores(lat: Double, lng: Double, limit: Int = 20) = decodeNearby(call("shop_nearby_stores", Bw().f64(lat).f64(lng).u32(limit).done()))
 }
