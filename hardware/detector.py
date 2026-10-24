@@ -15,11 +15,15 @@ class YoloDetector:
         self.model = YOLO(model_path)
         self.confidence = confidence
         self.device = device
+        self.class_ids = None
+
+    def set_class_ids(self, class_ids):
+        self.class_ids = list(class_ids)
 
     def detect(self, frame):
-        # Keep other COCO detections in the result so the tracker can treat
-        # them as occupancy and avoid counting an ambiguous mixed presentation.
         kwargs = {"conf": self.confidence, "verbose": False}
+        if self.class_ids is not None:
+            kwargs["classes"] = self.class_ids
         if self.device:
             kwargs["device"] = self.device
         result = self.model.predict(frame, **kwargs)[0]

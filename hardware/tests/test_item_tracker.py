@@ -3,53 +3,42 @@ import unittest
 from hardware.item_tracker import Detection, ItemTracker
 
 
-def fruit(name="apple", confidence=0.9, center=(320, 240)):
-    x, y = center
-    return Detection(name, confidence, (x - 30, y - 30, x + 30, y + 30))
+def detection(x, name="apple", y=240, width=640, height=480):
+    return Detection(name, 0.9, (x - 20, y - 20, x + 20, y + 20))
 
 
 class ItemTrackerTests(unittest.TestCase):
-    def setUp(self):
-        self.tracker = ItemTracker(confirm_frames=3, clear_frames=2)
+    def test_centroid_iou_association_preserves_track_id(self):
+        tracker = ItemTracker()
+        first = tracker.update([detection(100)], 640, 480)[0]
+        second = tracker.update([detection(110)], 640, 480)[0]
+        self.assertEqual(first.track_id, second.track_id)
+        self.assertTrue(second.observed)
 
-    def update(self, detections):
-        return self.tracker.update(detections, 640, 480)
+    def test_short_dropout_preserves_track_then_reacquires(self):
+        tracker = ItemTracker(max_missed_seconds=0.75)
+        first = tracker.update([detection(100)], 640, 480, timestamp=1.0)[0]
+        missed = tracker.update([], 640, 480, timestamp=1.5)[0]
+        self.assertFalse(missed.observed)
+        recovered = tracker.update([detection(115)], 640, 480, timestamp=1.7)[0]
+        self.assertEqual(first.track_id, recovered.track_id)
 
-    def test_confirms_once_and_does_not_duplicate_while_visible(self):
-        self.assertIsNone(self.update([fruit()]))
-        self.assertIsNone(self.update([fruit()]))
-        event = self.update([fruit()])
-        self.assertEqual(event.product_id, "apple")
-        for _ in range(10):
-            self.assertIsNone(self.update([fruit()]))
+    def test_track_expires_after_configured_dropout(self):
+        tracker = ItemTracker(max_missed_seconds=0.75)
+        first = tracker.update([detection(100)], 640, 480, timestamp=0.0)[0]
+        tracker.update([], 640, 480, timestamp=0.5)
+        tracker.update([], 640, 480, timestamp=0.76)
+        self.assertIn(first.track_id, tracker.expired_track_ids)
+        recovered = tracker.update([detection(100)], 640, 480, timestamp=0.8)[0]
+        self.assertNotEqual(first.track_id, recovered.track_id)
 
-    def test_rearms_after_clear_and_emits_on_reintroduction(self):
-        for _ in range(3):
-            event = self.update([fruit("banana")])
-        self.assertEqual(event.product_id, "banana")
-        self.assertIsNone(self.update([]))
-        self.assertIsNone(self.update([]))
-        for _ in range(2):
-            self.assertIsNone(self.update([fruit("banana")]))
-        event = self.update([fruit("banana")])
-        self.assertEqual(event.product_id, "banana")
-
-    def test_unsupported_or_uncertain_detections_do_not_generate_events(self):
-        for _ in range(5):
-            self.assertIsNone(self.update([fruit("carrot")]))
-        self.assertIsNone(self.update([fruit("orange", 0.49)]))
-
-    def test_multiple_objects_are_ambiguous_and_do_not_confirm(self):
-        for _ in range(5):
-            self.assertIsNone(self.update([fruit("apple"), fruit("banana", center=(350, 240))]))
-        for _ in range(2):
-            self.assertIsNone(self.update([fruit("apple")]))
-        self.assertEqual(self.update([fruit("apple")]).product_id, "apple")
-
-    def test_zone_uses_detection_center(self):
-        outside = fruit(center=(20, 20))
-        for _ in range(3):
-            self.assertIsNone(self.update([outside]))
+    def test_product_class_requires_multiple_consistent_observations(self):
+        tracker = ItemTracker()
+        for name in ("apple", "banana", "apple", "apple"):
+            obj = tracker.update([detection(100, name)], 640, 480)[0]
+        self.assertEqual(obj.stable_class(4, 0.67), ("apple", 0.9))
+        tracker.update([detection(100, "banana")], 640, 480)
+        self.assertEqual(tracker.tracks[obj.track_id].stable_class(5, 0.67)[0], None)
 
 
 if __name__ == "__main__":

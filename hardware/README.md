@@ -1,146 +1,118 @@
 # SmartCart camera scanner
 
-The scanner uses pretrained YOLOv8n COCO weights. It looks for `apple`, `banana`, and `orange` and prints one JSON `ADD` event after the same supported item is detected for several consecutive frames. A confirmed item cannot be counted again until the zone has been clear for the configured number of frames. Multiple confident objects, including unsupported COCO objects, are treated as ambiguous occupancy.
+The Windows and Jetson scanners share the same Python-only box tracker, crossing state machine, local bag accounting, and event transport interface. Inference is supplied by Ultralytics YOLOv8n on Windows or the native TensorRT 10 detector on Jetson. No PyTorch dependency is used for tracking or crossing logic.
 
-## Windows setup and run
+## Windows setup
 
-Use Python 3.9 or newer (Python 3.10+ recommended). Run the commands that match your terminal; `Activate.ps1` is only for PowerShell.
-
-### PowerShell
-
-```powershell
-py -3 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r hardware\requirements.txt
-```
-
-### Git Bash on Windows
-
-In Git Bash, activate the Windows virtual environment with its Bash activation script:
+Use Python 3.9 or newer (Python 3.10+ recommended). In Git Bash at the repository root, activate the existing Windows virtual environment and install the dependencies if needed:
 
 ```bash
-py -3 -m venv .venv
 source .venv/Scripts/activate
-python -m pip install --upgrade pip
 python -m pip install -r hardware/requirements.txt
 ```
 
-If you are in WSL or another Linux environment, create a Linux virtual environment there instead. A Windows `.venv` cannot be activated or used from Linux:
+The first model run downloads `yolov8n.pt` if it is not already in the repository root.
+
+## Event-based bag crossing scanner
+
+The event scanner tracks configured products from `data/detectable_products.json`. The top half of the full frame is OUTSIDE BAG and the bottom half is INSIDE BAG. It emits `ADD` on a confirmed top-to-bottom crossing and `REMOVE` on bottom-to-top. It confirms each side over multiple observations, applies configurable centroid smoothing and a neutral hysteresis band around the boundary, and does not infer removal from a missing detection. Tracks reconnect by IoU/centroid for up to 0.75 seconds by default; expiry never produces an event. Multiple tracked products in the scan region suspend crossing confirmation.
+
+Run the Logitech webcam with the annotated preview:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r hardware/requirements.txt
+./.venv/Scripts/python.exe -m hardware.main --source 1 --confidence 0.5 --preview
 ```
 
-First run downloads the pretrained `yolov8n.pt` weights from Ultralytics. Examples:
-
-```powershell
-# Default webcam (0), with annotated preview
-python -m hardware.main --source 0 --preview
-
-# Video file, headless
-python -m hardware.main --source .\data\groceries.mp4 --headless
-
-# Still image; evaluates it repeatedly to apply the confirmation rule
-python -m hardware.main --source .\data\apple.jpg --headless
-
-# Tune threshold, confirmation, clear count, and central zone size
-python -m hardware.main --source 0 --confidence 0.55 --confirm-frames 4 --clear-frames 8 `
-  --zone-width 0.5 --zone-height 0.5 --preview
-```
-
-Press `q` or Esc to close preview; Ctrl+C stops headless mode. JSON events are printed one per line. `--zone-center-x` and `--zone-center-y` move the zone center; all zone coordinates and dimensions are frame fractions from 0 to 1. `hardware/test_camera.py` remains available as the pre-existing camera capture utility.
-
-## Live YOLO webcam test with configurable products
-
-Edit [`data/detectable_products.json`](../data/detectable_products.json) to choose exact class names from the pretrained model's COCO mapping. The default list is `apple`, `banana`, `orange`, `bottle`, `carrot`, and `broccoli`. Save the JSON and restart the scanner to apply changes. Product config paths are resolved from the repository root.
-
-From Git Bash on Windows, at the repository root:
+Run headless, or replay prerecorded footage through the same tracker:
 
 ```bash
-./.venv/Scripts/python.exe hardware/test_live_yolo.py --camera 0 --conf 0.4
+./.venv/Scripts/python.exe -m hardware.main --source 1 --confidence 0.5 --headless
+./.venv/Scripts/python.exe -m hardware.main --source data/grocery_clip.mp4 --confidence 0.5 --preview
 ```
 
-`--products-config` can select another JSON file; a relative path is resolved from the repository root. For example:
+The scanner requests 640x360 at 30 FPS by default because this Logitech source delivers frames faster at that mode than at 1280x720. Override the request with `--width`, `--height`, and `--fps`; unsupported settings leave the camera's current working mode in place. On Windows it attempts to set supported camera zoom controls to their minimum. During a live preview, camera capture/display refresh runs independently from YOLO inference so slow inference does not stall the webcam view. The overlay reports camera FPS and YOLO FPS separately; tracking and events update at the YOLO rate. The preview displays the complete uncropped frame at its original aspect ratio; higher resolution improves detail but does not change the lens's physical field of view. YOLO processes the full frame using its normal inference resizing.
+
+Press Q or Esc to stop a preview; Ctrl+C stops headless mode. Events print as JSON lines and are also delivered to an in-process mock receiver by default. Use `--transport console` or `--transport mock` to select one. The preview labels each box with its stable product class, track ID, confidence, current zone, previous stable zone, and event status. It also shows the outside/inside zones, crossing boundary, FPS, global event status, and current bag counts.
+
+### Product and geometry configuration
+
+Edit `data/detectable_products.json` to select exact COCO class names. The scanner validates every name against the loaded model mapping. No product whitelist is embedded in the tracking code.
+
+Edit `data/scan_geometry.json` to adjust normalized `x1`, `y1`, `x2`, `y2` zone rectangles and the boundary segment. Coordinates range from 0 to 1 relative to frame width and height. Defaults define OUTSIDE BAG as y=0.0-0.5, INSIDE BAG as y=0.5-1.0, and the horizontal boundary at y=0.5; `zone_margin` creates the neutral hysteresis gap around that line. Set `add_direction` to `outside_to_inside` (default) or `inside_to_outside` if the camera view is mirrored or the entry direction is reversed; the opposite direction emits REMOVE. The same file controls detection confidence, centroid smoothing, required observations, minimum travel distance, class stability, 0.75-second default track retention, and spatial matching tolerances. `--confidence` overrides the geometry file's confidence threshold. Restart the scanner after editing either JSON file.
+
+### Recognition-only comparison mode
+
+`test_live_yolo.py` remains available to compare raw product recognition without crossing logic:
 
 ```bash
-./.venv/Scripts/python.exe hardware/test_live_yolo.py --camera 1 --conf 0.5 \
-  --products-config data/seasonal_products.json
+./.venv/Scripts/python.exe hardware/test_live_yolo.py --camera 1 --conf 0.4
 ```
 
-Change `--camera` for another webcam index. The preview shows each allowed detection's original model class name, class ID, confidence, box, and approximate FPS. The terminal prints a product name when it appears and can print it again after it disappears and returns. Press Q or Esc to stop.
+It uses the same product JSON and prints names as they appear/disappear. The resizable preview is raised above other windows at startup. An alternate list can be passed with `--products-config data/other-products.json`.
 
 ## Tests
 
-Tests use only Python's standard library and simulated frame detections:
+Run all hardware unit tests from Git Bash at the repository root:
 
-```powershell
-python -m unittest discover -s hardware\tests -v
+```bash
+./.venv/Scripts/python.exe -m unittest discover -s hardware/tests -v
 ```
 
-The suite covers confirmation, no duplicate while visible, rearming after removal, unsupported and low confidence detections, ambiguous multiple objects, and zone boundaries. For a live Windows camera check, run the webcam command above and present/remove/re-present one fruit at a time. A real camera/model run requires OpenCV, Ultralytics, the downloaded weights, and an attached camera.
+Tests cover tracking association, short dropouts and expiry, class stability, stationary products, top-to-bottom ADD and bottom-to-top REMOVE crossings, jitter at the center boundary, missing detections, repeated identical products, unsupported classes, ambiguity suppression, and rejecting REMOVE when no matching item is in the local bag. Crossing behavior is checked at 640x480, 1280x720, and 1920x1080 to confirm normalized geometry. No camera, model weights, GPU, or Bluetooth is needed for these unit tests.
 
-## Export the Jetson model
+For physical validation, run the webcam command above, present a whitelisted object well inside the OUTSIDE BAG top zone, move it downward fully through the yellow center boundary, and hold it in the INSIDE BAG bottom zone. Move it upward to test REMOVE. Repeat with a brief occlusion, stationary placement, and two objects near the opening. Video replay uses `--source path/to/clip.mp4`; tune `scan_geometry.json` to match the camera framing before relying on events.
 
-After installing the Windows requirements and confirming the scanner environment works:
+## Events and transport
 
-```powershell
-python -m hardware.export_onnx --weights yolov8n.pt --output-dir hardware\models
+The current event fields are `event_id`, `action`, `product_id`, `confidence`, and `timestamp`, for example:
+
+```json
+{"event_id":"sessiona1b2c3d4e5-17","action":"ADD","product_id":"apple","confidence":0.93,"timestamp":"2026-10-24T18:30:00Z"}
 ```
 
-This writes fixed 640x640, batch-1, non-dynamic ONNX with built-in NMS disabled and `coco_classes.json`. `hardware/models/` and model artifacts are ignored by Git.
+The session-scoped sequence makes IDs unique across events and sessions. Local bag counts increase on accepted ADD and decrease on accepted REMOVE; a REMOVE with no recorded item is rejected. `hardware/transport.py` defines the `send(event)` interface with console, mock, and composite transports. Bluetooth is not implemented. Coordinate this event contract with the teammate who owns the app before connecting it; this work does not modify app or backend code.
 
-## Jetson deployment
+### Future BLE GATT design (documentation only)
 
-The Jetson runtime expects its existing Python 3, NumPy, OpenCV (`cv2`), TensorRT 10 Python bindings, and CUDA runtime library (`libcudart`). It does not install or modify PyTorch, CUDA, TensorRT, system Python, or NVIDIA drivers. The TensorRT runtime code uses `ctypes` for CUDA memory management and adds no CUDA Python package dependency.
+- Jetson is a BLE peripheral and the phone is a central that subscribes to notifications. Use a native phone app for iOS; do not depend on Web Bluetooth support in iOS browsers.
+- Stable custom service UUID: `8e4f4a20-2bb3-4a49-9f20-6f53a8500001`.
+- Event characteristic UUID (Notify + Read): `8e4f4a20-2bb3-4a49-9f20-6f53a8500002`.
+- Acknowledgement characteristic UUID (Write): `8e4f4a20-2bb3-4a49-9f20-6f53a8500003`.
+- Encode a versioned compact CBOR map with event ID, action, exact COCO product name, confidence scaled to an integer from 0–10000, and timestamp. Include a small fragment index/count envelope when a message exceeds the negotiated ATT payload; reassemble by event ID and reject incomplete payloads.
+- Keep unacknowledged events in a bounded queue while disconnected, reconnect with backoff, and replay them with the original IDs. The receiver persists processed event IDs and applies each event only once, then writes an ACK containing that ID. Duplicate notifications are acknowledged without reapplying. Surface queue overflow and permanent disconnect state to the local logger.
 
-The deployment script transfers the ONNX model, class mapping, TensorRT scanner, shared tracker, and event module. It requires Windows OpenSSH `ssh`/`scp` and reachable Jetson networking:
+## Jetson TensorRT deployment
+
+Export the fixed 640x640 ONNX model on Windows after installing the requirements:
+
+```bash
+./.venv/Scripts/python.exe -m hardware.export_onnx --weights yolov8n.pt --output-dir hardware/models
+```
+
+Transfer the inference code, both configuration files, model and COCO mapping over SSH/SCP. This requires no Jetson internet access:
 
 ```powershell
 .\hardware\deploy_jetson.ps1 -JetsonIp <JETSON_IP>
 ```
 
-On the Jetson, from `/home/scott170/calhacks`:
+On the Jetson, from `/home/scott170/calhacks`, compile the engine with the installed TensorRT:
 
 ```bash
 cd /home/scott170/calhacks
-/usr/src/tensorrt/bin/trtexec \
-  --onnx=hardware/models/yolov8n.onnx \
-  --saveEngine=hardware/models/yolov8n_fp16.engine \
-  --fp16 --shapes=images:1x3x640x640
+/usr/src/tensorrt/bin/trtexec --onnx=hardware/models/yolov8n.onnx \
+  --saveEngine=hardware/models/yolov8n_fp16.engine --fp16 --shapes=images:1x3x640x640
 ```
 
-Check the ONNX input name if `trtexec` reports that `images` is not found:
-
-```bash
-/usr/src/tensorrt/bin/trtexec --onnx=hardware/models/yolov8n.onnx --verbose
-```
-
-The Python runtime does not import PyTorch. `tensorrt_detector.py` inspects engine tensor names, shapes, and dtypes at startup, expects the fixed `[1,3,640,640]` input, handles the standard raw `[1,84,8400]` YOLOv8 output, letterboxes RGB input, normalizes to `[0,1]`, applies confidence filtering and class-aware NMS, and maps box coordinates back to the camera frame. It uses `libcudart` via Python `ctypes` for device allocation/copies, so neither PyCUDA nor cuda-python is needed. Inspect any installed optional memory bindings before adding packages:
-
-```bash
-python3 - <<'PY'
-import importlib.util
-for name in ("cuda", "cuda.cudart", "cuda.bindings.runtime", "pycuda", "tensorrt"):
-    try:
-        print(name, bool(importlib.util.find_spec(name)))
-    except (ImportError, ModuleNotFoundError, ValueError):
-        print(name, False)
-PY
-```
-
-Run continuously with a Logitech camera in headless mode:
+Then run the same crossing logic headless on the Logitech camera:
 
 ```bash
 cd /home/scott170/calhacks
-python3 -m hardware.main_tensorrt --source /dev/video0 --engine hardware/models/yolov8n_fp16.engine
+python3 -m hardware.main_tensorrt --source /dev/video0 \
+  --engine hardware/models/yolov8n_fp16.engine --confidence 0.5
 ```
 
-Press Ctrl+C to stop. The camera is released and the JSON `ADD` line has the same fields as on Windows. If OpenCV cannot open `/dev/video0`, check `v4l2-ctl --list-devices`, permissions for `/dev/video0`, and whether another process has claimed it. If TensorRT fails to deserialize or reports a different output layout, inspect the startup tensor shape and `trtexec --verbose`; this implementation targets the standard single-output YOLOv8n ONNX export described above.
+The Jetson runtime expects its existing Python 3, NumPy, OpenCV, TensorRT 10 Python bindings, and CUDA runtime library. It does not reinstall or modify CUDA, TensorRT, PyTorch, system Python, or NVIDIA drivers. The runtime decodes all model classes, then applies the shared JSON whitelist before tracking. Tracking and crossing depend only on Python and do not import PyTorch.
 
-## Verification status
+## Validation status
 
-The code and test cases are prepared in the repository. Run the commands above on Windows and Jetson to validate the actual model, camera, ONNX export, and TensorRT engine. No physical Jetson or webcam run is claimed by this repository change.
+Automated tests are hardware-independent. Webcam preview, real YOLO inference, ONNX export, SCP transfer, TensorRT engine compilation, and Jetson camera operation require manual execution on the Windows laptop or physical Jetson and are not claimed as run by this implementation.
