@@ -1,0 +1,1 @@
+{"name": "smartbag-console", "private": true, "type": "module", "dependencies": {"spacetimedb": "2.13.0"}, "devDependencies": {"esbuild": "^0.24.0"}}
