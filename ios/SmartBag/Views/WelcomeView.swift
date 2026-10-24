@@ -1,65 +1,92 @@
-// WelcomeView.swift: first run. One welcome screen, then one priming screen per permission whose button
-// triggers that single system prompt (Bluetooth, Location, Notifications), then the shop.
+// WelcomeView.swift: the signed-out welcome (Create account / I already have an account), and the permission
+// priming screens that open setup: one screen per permission whose button triggers that single system prompt
+// (Bluetooth, Location, Notifications).
 
 import SwiftUI
 import UserNotifications
 
-struct WelcomeView: View {
-    let onStart: () -> Void
+/// Signed out: the promise, three beats, then an account. Payments are simulated; the card comes from the wallet.
+struct WelcomeScreen: View {
+    let onCreate: () -> Void
+    let onLogIn: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    Lockup(height: 32).padding(.top, Space.xxxl)
+                    Text("The bag that\nchecks you out.")
+                        .font(TypeScale.display).foregroundColor(Theme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityAddTraits(.isHeader)
+                        .padding(.top, Space.xxl)
+                    Text("No lines. No scanning.")
+                        .font(TypeScale.body).foregroundColor(Theme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, Space.m)
+                    VStack(alignment: .leading, spacing: Space.l) {
+                        Beat(n: 1, title: "Drop it in", why: "Put groceries in your bag as you shop.")
+                        Beat(n: 2, title: "It knows", why: "Each item shows up here with the store's price.")
+                        Beat(n: 3, title: "Walk out", why: "Your card is charged as you leave the store.")
+                    }
+                    .padding(.top, Space.xxl)
+                    Text("Demo: payments are simulated. No money moves.")
+                        .font(TypeScale.caption).foregroundColor(Theme.faint)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, Space.xxl)
+                }
+                .padding(.horizontal, Space.margin)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            VStack(spacing: Space.xs) {
+                Button("Create account", action: onCreate).buttonStyle(PillStyle())
+                Button("I already have an account", action: onLogIn).buttonStyle(TextAction())
+            }
+            .padding(.horizontal, Space.margin)
+            .padding(.top, Space.l)
+            .padding(.bottom, Space.s)
+        }
+        .background(Theme.bg.ignoresSafeArea())
+    }
+}
+
+/// Setup step 1: one priming screen per permission, each right before its single system prompt.
+struct PermissionSteps: View {
+    let step: (Int, Int)
+    let onDone: () -> Void
     @EnvironmentObject var m: ShopModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var step = 0                  // 0 welcome, 1 Bluetooth, 2 Location, 3 Notifications
+    @State private var page = 0                  // 0 Bluetooth, 1 Location, 2 Notifications
     @State private var advancing = false         // a double tap must not skip a screen
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if step > 0 { StepBar(step: step).padding(.top, Space.l) }
+            FlowBar(step: step).padding(.top, Space.s)
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     Spacer(minLength: Space.xxxl)
-                    page
+                    content
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .id(step)
+            .id(page)
             .transition(reduceMotion ? .opacity : .asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
                                                               removal: .opacity))
             buttons.padding(.top, Space.l).disabled(advancing)
         }
         .padding(.horizontal, Space.margin)
-        .padding(.bottom, Space.l)
+        .padding(.bottom, Space.s)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Theme.bg.ignoresSafeArea())
     }
 
-    @ViewBuilder private var page: some View {
-        switch step {
+    @ViewBuilder private var content: some View {
+        switch page {
         case 0:
-            Lockup(height: 32)
-            Text("The bag that\nchecks you out.")
-                .font(TypeScale.display).foregroundColor(Theme.ink)
-                .accessibilityAddTraits(.isHeader)
-                .padding(.top, Space.xxl)
-            Text("No lines. No scanning.")
-                .font(TypeScale.body).foregroundColor(Theme.muted)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, Space.m)
-            VStack(alignment: .leading, spacing: Space.l) {
-                Beat(n: 1, title: "Drop it in", why: "Put groceries in your bag as you shop.")
-                Beat(n: 2, title: "It knows", why: "Each item shows up here with the store's price.")
-                Beat(n: 3, title: "Walk out", why: "Your card is charged as you leave the store.")
-            }
-            .padding(.top, Space.xxl)
-            Text("Demo: payments are simulated with \(unbreakable(SmartBagConfig.demoPayment)).")
-                .font(TypeScale.caption).foregroundColor(Theme.faint)
-                .accessibilityLabel("Demo: payments are simulated with \(spoken(SmartBagConfig.demoPayment)).")
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, Space.xxl)
-        case 1:
             Prime(art: AnyView(SlotMark(size: 48, lit: 0).padding(.leading, -6)),   // the slot first lights when a real bag connects
                   title: "Connect your bag",
                   why: "Bag It uses Bluetooth to hear what you drop in your bag.")
-        case 2:
+        case 1:
             Prime(art: AnyView(Symbol(name: "location")),
                   title: "Find your store",
                   why: "Your location tells us which store you're in, and when you leave so we can charge your bag.",
@@ -73,22 +100,20 @@ struct WelcomeView: View {
 
     @ViewBuilder private var buttons: some View {
         VStack(spacing: Space.s) {
-            switch step {
+            switch page {
             case 0:
-                Button("Get started") { next() }.buttonStyle(PillStyle())
+                Button("Allow Bluetooth") { m.link.requestAccess(); next(after: 0.4) }.buttonStyle(PillStyle())
             case 1:
-                Button("Allow Bluetooth") { m.connectBag(); next(after: 0.4) }.buttonStyle(PillStyle())
-            case 2:
                 Button("Allow Location") { m.location.start(); next(after: 0.4) }.buttonStyle(PillStyle())
             default:
                 Button("Allow Notifications") {
                     advancing = true
                     UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in
-                        DispatchQueue.main.async { onStart() }
+                        DispatchQueue.main.async { onDone() }
                     }
                 }
                 .buttonStyle(PillStyle())
-                Button("Not now") { advancing = true; onStart() }.buttonStyle(PillStyle(primary: false))
+                Button("Not now") { advancing = true; onDone() }.buttonStyle(PillStyle(primary: false))
             }
         }
     }
@@ -98,22 +123,9 @@ struct WelcomeView: View {
         guard !advancing else { return }
         advancing = true
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            withAnimation(.easeInOut(duration: 0.3)) { step += 1 }
+            withAnimation(.easeInOut(duration: 0.3)) { page += 1 }
             advancing = false
         }
-    }
-}
-
-private struct StepBar: View {
-    let step: Int
-    var body: some View {
-        HStack(spacing: Space.xs) {
-            ForEach(1 ... 3, id: \.self) { i in
-                Capsule().fill(i <= step ? Theme.ink : Theme.hair).frame(width: 24, height: 4)
-            }
-        }
-        .accessibilityElement()
-        .accessibilityLabel("Step \(step) of 3")
     }
 }
 

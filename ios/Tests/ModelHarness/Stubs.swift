@@ -30,8 +30,12 @@ final class BagLink {
     let onLine: (String) -> Void
     let onState: (BagState) -> Void
     var sent: [String] = []
+    var allowed: Set<String>?? = .none          // .none = never set
+    var connects = 0
     init(onLine: @escaping (String) -> Void, onState: @escaping (BagState) -> Void) { self.onLine = onLine; self.onState = onState }
-    func connect() { onState(.connected("SmartBag-Harness")) }
+    func connect() { connects += 1; onState(.connected("SmartBag-Harness")) }
+    func disconnect() { onState(.off) }
+    func setAllowed(_ names: Set<String>?) { allowed = .some(names) }
     func send(_ message: String) { sent.append(message) }
 }
 
@@ -40,7 +44,9 @@ final class PhoneLocation {
     let onFix: (CLLocation) -> Void
     let onStatus: (Status) -> Void
     init(onFix: @escaping (CLLocation) -> Void, onStatus: @escaping (Status) -> Void) { self.onFix = onFix; self.onStatus = onStatus }
-    func start() { onStatus(.ok) }
+    var running = false
+    func start() { running = true; onStatus(.ok) }
+    func stop() { running = false }
 }
 
 final class Notify {

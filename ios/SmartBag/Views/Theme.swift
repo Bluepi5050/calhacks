@@ -24,9 +24,10 @@ extension Color {
 
 enum Theme {
     /// Light and dark values from the brand (brand.md): zinc neutrals, one coral.
-    private static func adaptive(_ light: UInt32, _ dark: UInt32) -> Color {
-        Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(hex: dark) : UIColor(hex: light) })
+    static func ui(_ light: UInt32, _ dark: UInt32) -> UIColor {
+        UIColor { $0.userInterfaceStyle == .dark ? UIColor(hex: dark) : UIColor(hex: light) }
     }
+    private static func adaptive(_ light: UInt32, _ dark: UInt32) -> Color { Color(ui(light, dark)) }
     // 60: neutral base
     static let bg = adaptive(0xFAFAFA, 0x0B0B0C)
     static let surface = adaptive(0xFFFFFF, 0x18181B)
@@ -188,10 +189,12 @@ struct Lockup: View {
 
 // MARK: - Controls
 
-/// Ink pill (primary) or hairline pill (secondary). 52 pt tall, full width.
+/// Ink pill (primary) or hairline pill (secondary). 52 pt tall, full width. `destructive`: red pill for the one
+/// irreversible confirm (delete account, remove card), red label on a secondary pill.
 struct PillStyle: ButtonStyle {
     var primary = true
     var full = true
+    var destructive = false
     @Environment(\.isEnabled) private var enabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -199,11 +202,11 @@ struct PillStyle: ButtonStyle {
         configuration.label
             .font(TypeScale.bodyStrong)
             .multilineTextAlignment(.center)
-            .foregroundColor(primary ? Theme.onInk : Theme.ink)
+            .foregroundColor(primary ? Theme.onInk : (destructive ? Theme.bad : Theme.ink))
             .padding(.horizontal, Space.xl)
             .padding(.vertical, Space.m)
             .frame(maxWidth: full ? .infinity : nil, minHeight: full ? 52 : 44)
-            .background(Capsule().fill(primary ? Theme.ink : Theme.surface))
+            .background(Capsule().fill(primary ? (destructive ? Theme.bad : Theme.ink) : Theme.surface))
             .overlay(Capsule().stroke(primary ? Color.clear : Theme.hair, lineWidth: 1))
             .opacity(enabled ? (configuration.isPressed ? 0.8 : 1) : 0.4)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.98 : 1)
@@ -287,3 +290,287 @@ func spoken(_ card: String) -> String { card.replacingOccurrences(of: "•••
 
 /// Keeps "Demo Visa •••• 4242" on one line (no-break spaces).
 func unbreakable(_ s: String) -> String { s.replacingOccurrences(of: " ", with: "\u{00A0}") }
+
+
+// MARK: - Accounts, wallet, setup (1.2): the same parts, reused
+
+/// Tab bar in the system: monoline glyphs, ink selected, faint unselected, hairline top, no coral.
+enum TabBarStyle {
+    static func apply() {
+        let a = UITabBarAppearance()
+        a.configureWithOpaqueBackground()
+        a.backgroundColor = Theme.ui(0xFAFAFA, 0x0B0B0C)
+        a.shadowColor = Theme.ui(0xE4E4E7, 0x27272A)
+        let item = UITabBarItemAppearance(style: .stacked)
+        let faint = Theme.ui(0x71717A, 0x8E8E97), ink = Theme.ui(0x18181B, 0xF4F4F5)
+        item.normal.iconColor = faint
+        item.normal.titleTextAttributes = [.foregroundColor: faint]
+        item.selected.iconColor = ink
+        item.selected.titleTextAttributes = [.foregroundColor: ink]
+        a.stackedLayoutAppearance = item
+        a.inlineLayoutAppearance = item
+        a.compactInlineLayoutAppearance = item
+        UITabBar.appearance().standardAppearance = a
+        UITabBar.appearance().scrollEdgeAppearance = a
+    }
+}
+
+/// Setup progress: one segment per setup step (permissions, pair your bag, add a card).
+struct StepBar: View {
+    let step: Int
+    var total: Int = 3
+    var body: some View {
+        HStack(spacing: Space.xs) {
+            ForEach(1 ... max(total, 1), id: \.self) { i in
+                Capsule().fill(i <= step ? Theme.ink : Theme.hair).frame(width: 24, height: 4)
+            }
+        }
+        .accessibilityElement()
+        .accessibilityLabel("Step \(step) of \(total)")
+    }
+}
+
+/// Top of a flow screen: Back on the left (chevron + word), a step bar, or Cancel on the right. 44 pt targets.
+struct FlowBar: View {
+    var back: (() -> Void)? = nil
+    var close: (() -> Void)? = nil
+    var closeLabel = "Cancel"
+    var step: (Int, Int)? = nil
+    var body: some View {
+        HStack(spacing: Space.s) {
+            if let back {
+                Button(action: back) {
+                    HStack(spacing: Space.xs) {
+                        Image(systemName: "chevron.left").font(TypeScale.bodyStrong)
+                        Text("Back").font(TypeScale.body)
+                    }
+                    .foregroundColor(Theme.ink)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.leading, -Space.xs)
+                .accessibilityLabel("Back")
+            } else if let step {
+                StepBar(step: step.0, total: step.1)
+            }
+            Spacer(minLength: Space.s)
+            if back != nil, let step { StepBar(step: step.0, total: step.1) }
+            if let close {
+                Button(closeLabel, action: close).font(TypeScale.body).foregroundColor(Theme.ink)
+                    .frame(minWidth: 44, minHeight: 44).buttonStyle(.plain)
+            }
+        }
+        .frame(minHeight: 44)
+    }
+}
+
+/// Screen title (34 semibold) with an optional lead line, as in the shop's hero.
+struct ScreenTitle: View {
+    let title: String
+    var lead: String? = nil
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(title).font(TypeScale.display).foregroundColor(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
+            if let lead {
+                Text(lead).font(TypeScale.body).foregroundColor(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true).padding(.top, Space.m)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// "In your bag"-style section label above a hairline list.
+struct SectionLabel: View {
+    let text: String
+    var trailing: String? = nil
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(text).font(TypeScale.caption).foregroundColor(Theme.muted).accessibilityAddTraits(.isHeader)
+                Spacer()
+                if let trailing { Text(trailing).font(TypeScale.captionNum).foregroundColor(Theme.muted) }
+            }
+            .padding(.bottom, Space.s)
+            Hairline()
+        }
+    }
+}
+
+/// Unlit bag mark, a title and one line: empty bag, no trips, no cards.
+struct EmptyState: View {
+    let title: String
+    let why: String
+    var body: some View {
+        VStack(spacing: 0) {
+            SlotMark(size: 48, tone: Theme.unlit, lit: 0)
+            Text(title).font(TypeScale.bodyStrong).foregroundColor(Theme.ink).padding(.top, Space.l)
+            Text(why).font(TypeScale.caption).foregroundColor(Theme.muted)
+                .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true).padding(.top, Space.xs)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, Space.xxxl)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// A form field the Bag It way: caption label above, body text, a hairline underneath (ink while focused),
+/// a hint or the field's own error under it. No boxes.
+struct FormField: View {
+    enum Kind { case text, email, password, number }
+    let label: String
+    @Binding var text: String
+    var kind: Kind = .text
+    var placeholder = ""
+    var hint: String? = nil
+    var error: String? = nil
+    var content: UITextContentType? = nil
+    var trailing: String? = nil                       // e.g. the detected card brand
+    var sensitive = false
+    @State private var reveal = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(label).font(TypeScale.caption).foregroundColor(Theme.muted)
+            HStack(spacing: Space.s) {
+                Group {
+                    if kind == .password && !reveal {
+                        SecureField(placeholder, text: $text)
+                    } else {
+                        TextField(placeholder, text: $text)
+                    }
+                }
+                .font(kind == .number ? TypeScale.body.monospacedDigit() : TypeScale.body)
+                .foregroundColor(Theme.ink)
+                .textContentType(content)
+                .keyboardType(kind == .email ? .emailAddress : (kind == .number ? .numberPad : .default))
+                .textInputAutocapitalization(kind == .text ? .words : .never)
+                .autocorrectionDisabled(kind != .text)
+                .focused($focused)
+                .frame(minHeight: 44)
+                .accessibilityLabel(label)
+                .accessibilityHint(error ?? hint ?? "")
+                if let trailing, !trailing.isEmpty {
+                    Text(trailing).font(TypeScale.caption).foregroundColor(Theme.faint).accessibilityHidden(true)
+                }
+                if kind == .password {
+                    Button(reveal ? "Hide" : "Show") { reveal.toggle() }.buttonStyle(InlineAction()).padding(.trailing, -Space.s)
+                        .accessibilityLabel(reveal ? "Hide password" : "Show password")
+                }
+            }
+            .padding(.top, Space.xs)
+            Rectangle().fill(error != nil ? Theme.bad : (focused ? Theme.ink : Theme.hair)).frame(height: 1).accessibilityHidden(true)
+            if let error {
+                Text(error).font(TypeScale.caption).foregroundColor(Theme.bad)
+                    .fixedSize(horizontal: false, vertical: true).padding(.top, Space.xs)
+            } else if let hint {
+                Text(hint).font(TypeScale.caption).foregroundColor(Theme.faint)
+                    .fixedSize(horizontal: false, vertical: true).padding(.top, Space.xs)
+            }
+        }
+        .privacySensitive(sensitive)
+    }
+}
+
+/// The pinned bottom of a form: the server's error in red right above the one primary pill, which shows progress
+/// while the call runs. Extra quiet actions go under it.
+struct FormDock<Extra: View>: View {
+    let title: String
+    var busy = false
+    var error: String? = nil
+    let action: () -> Void
+    @ViewBuilder var extra: () -> Extra
+
+    var body: some View {
+        VStack(spacing: Space.s) {
+            if let error {
+                Text(error).font(TypeScale.caption).foregroundColor(Theme.bad)
+                    .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel("Error: \(error)")
+            }
+            Button(action: action) {
+                ZStack {
+                    Text(title).opacity(busy ? 0 : 1)
+                    if busy { ProgressView().tint(Theme.onInk) }
+                }
+            }
+            .buttonStyle(PillStyle())
+            .disabled(busy)
+            .accessibilityLabel(busy ? "\(title), working" : title)
+            extra()
+        }
+        .padding(.horizontal, Space.margin)
+        .padding(.top, Space.m)
+        .padding(.bottom, Space.s)
+        .background(Theme.bg.ignoresSafeArea(edges: .bottom))
+    }
+}
+
+extension FormDock where Extra == EmptyView {
+    init(title: String, busy: Bool = false, error: String? = nil, action: @escaping () -> Void) {
+        self.init(title: title, busy: busy, error: error, action: action, extra: { EmptyView() })
+    }
+}
+
+/// A text-only secondary action under a pill: "I already have an account", "Log in instead". 44 pt tall.
+struct TextAction: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(TypeScale.bodyStrong)
+            .foregroundColor(Theme.ink)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .contentShape(Rectangle())
+            .opacity(configuration.isPressed ? 0.6 : 1)
+    }
+}
+
+/// A tappable list row: content, then a faint chevron. 56 pt minimum, hairline below.
+struct RowButton<Content: View>: View {
+    let action: () -> Void
+    @ViewBuilder var content: () -> Content
+    var body: some View {
+        VStack(spacing: 0) {
+            Button(action: action) {
+                HStack(spacing: Space.m) {
+                    content()
+                    Image(systemName: "chevron.right").font(TypeScale.caption).foregroundColor(Theme.faint).accessibilityHidden(true)
+                }
+                .padding(.vertical, Space.m)
+                .frame(minHeight: 56)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Hairline()
+        }
+    }
+}
+
+/// "Visa  •••• 4242" over "Demo · Expires 12/29".
+struct CardLabel: View {
+    let card: CardInfo
+    var large = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+                Text(card.brand).font(large ? TypeScale.bodyStrong : TypeScale.body).foregroundColor(Theme.ink)
+                Text("•••• " + card.last4).font(TypeScale.body.monospacedDigit()).foregroundColor(Theme.ink)
+            }
+            Text((card.nickname.isEmpty ? "" : card.nickname + " · ") + "Expires " + card.expiry)
+                .font(TypeScale.captionNum).foregroundColor(Theme.muted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(card.nickname.isEmpty ? "" : card.nickname + ", ")\(card.brand) ending in \(card.last4), expires \(card.expMonth) \(card.expYear)")
+    }
+}
+
+extension View {
+    /// Sheets and covers get the two app models explicitly.
+    @MainActor func appModels() -> some View {
+        environmentObject(ShopModel.shared).environmentObject(AccountModel.shared)
+    }
+}

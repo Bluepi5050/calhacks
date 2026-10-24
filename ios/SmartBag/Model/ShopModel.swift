@@ -46,6 +46,9 @@ final class ShopModel: ObservableObject {
     @Published private(set) var flash: Flash?
     @Published private(set) var syncError: String?
     @Published private(set) var preciseLocationOff = false
+    /// Paired bags from the account (Bluetooth names, DEMO for the demo bag). Empty: the chip offers pairing.
+    @Published private(set) var pairedBags: [String] = []
+    @Published private(set) var started = false
 
     let api = SpacetimeClient(tokens: KeychainTokenStore())
     private(set) var link: BagLink!
@@ -57,7 +60,8 @@ final class ShopModel: ObservableObject {
     private var locating = false
     private var flashN = 0
     private var ignoreFixesUntil = Date.distantPast
-    private var started = false
+    private var demoBag = false                 // only the demo bag is paired: it counts as connected, no Bluetooth
+    private var signedIn = false
     private let defaults = UserDefaults.standard
 
     // Everything goes to the database strictly in order, one call at a time.
@@ -90,11 +94,8 @@ final class ShopModel: ObservableObject {
                 }
             }
         }
-        enqueue { [unowned self] in
-            var s = try await self.api.state()
-            if s.payment.isEmpty { s = try await self.api.setPayment(SmartBagConfig.demoPayment) }   // demo: no real card is stored
-            self.apply(s, fromLocation: false)
-        }
+        // Payment comes only from the wallet now (the module copies the default card onto this phone).
+        enqueue { [unowned self] in self.apply(try await self.api.state(), fromLocation: false) }
     }
 
     private func enqueue(_ op: @escaping Op) { ops.yield(op) }
@@ -105,7 +106,64 @@ final class ShopModel: ObservableObject {
         guard !started else { return }
         started = true
         location.start()
-        link.connect()
+        if demoBag { setBag(.connected("Demo bag")) } else { link.connect() }
+    }
+
+    /// Signed out: this phone stops watching the bag and the store (the module has already cleared its card and bag).
+    func stop() {
+        guard started else { return }
+        started = false
+        location.stop()
+        link.disconnect()
+        setBag(.off)
+        refresh()
+    }
+
+    /// Fresh priced bag from the database (after a wallet change, for example).
+    func refresh() {
+        enqueue { [unowned self] in self.apply(try await self.api.state(), fromLocation: false) }
+    }
+
+    /// The account changed: paired bags decide which bags Bluetooth may connect to, the default card is what pays.
+    func accountChanged(_ a: AccountState) {
+        let wasSignedIn = signedIn
+        signedIn = a.signedIn
+        if wasSignedIn && !a.signedIn {
+            // Hide the previous shopper's last trip from whoever signs in next on this phone, then stop watching.
+            if let r = lastReceipt { defaults.set(NSNumber(value: Int64(bitPattern: r.orderId)), forKey: "trip_floor") }
+            pairedBags = []
+            link.setAllowed(nil)
+            stop()
+            demoBag = false
+            return
+        }
+        let real = a.bags.filter { !$0.isDemo }.map(\.bagId)
+        let unpairedConnected = connectedBagId.map { pairedBags.contains($0) && !a.bags.map(\.bagId).contains($0) } ?? false
+        pairedBags = a.bags.map(\.bagId)
+        // Any Bag It bag while none is paired (or only the demo bag); afterwards only the account's own bags.
+        link.setAllowed(real.isEmpty ? nil : Set(real))
+        let demo = real.isEmpty && a.bags.contains { $0.isDemo }
+        if demo != demoBag {
+            demoBag = demo
+            if started {
+                if demo { link.disconnect(); setBag(.connected("Demo bag")) } else { setBag(.off); link.connect() }
+            }
+        }
+        if unpairedConnected && !demoBag && started {
+            link.disconnect()                     // the bag just unpaired is no longer this phone's
+            link.connect()
+        }
+        if a.payment != payment { refresh() }
+    }
+
+    /// After pairing without keeping a connection: pick the shopping connection back up if the shop is running.
+    func resumeBag() { if started { connectBag() } }
+
+    /// "Last trip": only this account's trips on this phone (see accountChanged).
+    var visibleLastReceipt: Receipt? {
+        guard let r = lastReceipt else { return nil }
+        let floor = (defaults.object(forKey: "trip_floor") as? NSNumber)?.int64Value ?? 0
+        return Int64(bitPattern: r.orderId) > floor ? r : nil
     }
 
     /// The app came to the foreground: pick up permission changes and refresh the bag.
@@ -155,18 +213,33 @@ final class ShopModel: ObservableObject {
     // MARK: bag
 
     private func onBag(_ s: BagState) {
+        guard !demoBag else { return }          // the demo bag stands in for Bluetooth
+        setBag(s)
+    }
+
+    private func setBag(_ s: BagState) {
         let before = bag
         bag = s
-        if s.isConnected != before.isConnected {
+        if s.isConnected != before.isConnected || (s.isConnected && s != before) {
             let name: String
             if case let .connected(n) = s { name = n } else { name = "" }
             enqueue { [unowned self] in self.apply(try await self.api.setBag(name), fromLocation: false) }
         }
     }
 
-    func connectBag() { link.connect() }
+    func connectBag() { if !demoBag { link.connect() } }
+
+    /// The Bluetooth name of the bag connected right now (nil for the demo bag or none).
+    var connectedBagId: String? {
+        if demoBag { return SmartBagConfig.demoBagId }
+        if case let .connected(n) = bag { return n }
+        return nil
+    }
 
     private func onLine(_ raw: String) {
+        // "BAG <name> fw2" answers HELLO during pairing: a control line, never an item.
+        if BagProtocol.isControl(raw) { return }
+        guard started else { return }            // nothing counts before setup is done and the shop is running
         let ev = BagProtocol.parse(raw)
         enqueue { [unowned self] in
             self.apply(try await self.api.bagLine(raw), fromLocation: false)

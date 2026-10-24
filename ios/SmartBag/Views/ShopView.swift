@@ -1,5 +1,6 @@
-// ShopView.swift: the one shopping screen. The hero says where you are; in a store the bag list and the
-// walk-out dock appear. There is no Pay button: the database charges the bag when the phone leaves.
+// ShopView.swift: the Shop tab. The hero says where you are; in a store the bag list and the walk-out dock
+// appear. There is no Pay button: the database charges the wallet's default card when the phone leaves.
+// 1.2: "Paying with <card>" opens the card picker; no card -> "Add card"; no paired bag -> the chip pairs one.
 
 import SwiftUI
 
@@ -8,13 +9,16 @@ struct ShopView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var reopened: Receipt?            // "Last trip" reopened as a sheet
     @State private var sheetUp = false               // the live receipt waits until that sheet has fully gone
+    @State private var picking = false               // card picker
+    @State private var addingCard = false
+    @State private var pairing = false
 
     /// The bag can't count yet and nothing is in it: the dock carries the one fix (thumb zone), not a notice.
     private var bagFixInDock: Bool { m.inStore != nil && m.count == 0 && !m.bag.isConnected && !m.bag.isBusy }
 
     /// A payment-due pass stays reachable for a few hours, including back inside the store to pay.
     private var duePass: Receipt? {
-        guard let r = m.lastReceipt, !r.isPaid, Date().timeIntervalSince(r.paidAt) < 6 * 3600 else { return nil }
+        guard let r = m.visibleLastReceipt, !r.isPaid, Date().timeIntervalSince(r.paidAt) < 6 * 3600 else { return nil }
         return r
     }
 
@@ -22,7 +26,7 @@ struct ShopView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    TopBar()
+                    TopBar(pair: { pairing = true })
                     if case .problem(let message) = m.bag, !bagFixInDock {
                         Notice(symbol: "exclamationmark.circle", message: message,
                                action: message.contains("Settings") ? "Open Settings" : "Try again") {
@@ -41,7 +45,7 @@ struct ShopView: View {
                             LastTrip(receipt: r) { open(r) }.padding(.top, Space.xxl)
                         }
                         BagList().padding(.top, Space.xxl)
-                    } else if let r = m.lastReceipt, m.paid == nil {
+                    } else if let r = m.visibleLastReceipt, m.paid == nil {
                         LastTrip(receipt: r) { open(r) }.padding(.top, Space.xxxl)
                     }
                 }
@@ -67,10 +71,15 @@ struct ShopView: View {
             case .offline:
                 ActionDock(title: "Try again") { m.foreground() }
             default:
-                if m.inStore != nil || !m.lines.isEmpty { WalkOutDock(fix: bagFixInDock) }
+                if m.inStore != nil || !m.lines.isEmpty {
+                    WalkOutDock(fix: bagFixInDock, onCards: { picking = true }, onAddCard: { addingCard = true }, onPair: { pairing = true })
+                }
             }
         }
         .onAppear { Haptics.prepare() }
+        .sheet(isPresented: $picking) { CardPickerSheet().presentationDetents([.medium, .large]).appModels() }
+        .sheet(isPresented: $addingCard) { AddCardScreen { addingCard = false }.appModels() }
+        .fullScreenCover(isPresented: $pairing) { PairingFlow { pairing = false }.appModels() }
         // A live receipt must be able to cover the screen even if a Last trip sheet is open.
         .onChange(of: m.paid?.id) { if $0 != nil { reopened = nil } }
         .sheet(item: $reopened, onDismiss: { sheetUp = false }) { r in
@@ -108,22 +117,29 @@ extension ShopView {
 // MARK: - Top bar
 
 struct TopBar: View {
+    var pair: () -> Void = {}
     var body: some View {
         HStack(alignment: .center) {
             Wordmark(height: 20).accessibilityAddTraits(.isHeader)
             Spacer(minLength: Space.l)
-            BagChip()
+            BagChip(pair: pair)
         }
         .frame(minHeight: 44)
     }
 }
 
-/// Bag status. Tap to connect; hidden demo: hold 1 s to drop a random item (also a VoiceOver action).
+/// Bag status. Tap to connect (or, with no bag paired yet, to pair one); hidden demo: hold 1 s to drop a random
+/// item (also a VoiceOver action).
 struct BagChip: View {
     @EnvironmentObject var m: ShopModel
+    var pair: () -> Void = {}
+
+    /// No bag on the account and none connected: the chip is the way to pair one.
+    private var unpaired: Bool { m.pairedBags.isEmpty && !m.bag.isConnected }
 
     var body: some View {
         let (label, color, busy): (String, Color, Bool) = {
+            if unpaired && !m.bag.isBusy { return ("Pair your bag", Theme.faint, false) }
             switch m.bag {
             case .connected: return ("Bag connected", Theme.good, false)
             case .connecting: return ("Connecting", Theme.faint, true)
@@ -142,18 +158,22 @@ struct BagChip: View {
         .overlay(Capsule().stroke(Theme.hair, lineWidth: 1))
         .padding(.vertical, Space.s)                  // 48 pt touch target around a 32 pt capsule
         .contentShape(Rectangle())
-        .onTapGesture { if !m.bag.isBusy { m.connectBag() } }
+        .onTapGesture { tap() }
         .onLongPressGesture(minimumDuration: 1.0, maximumDistance: 10) { haptic(); m.demoDrop() }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Bag")
         .accessibilityValue(connectedName.map { "Connected, \($0)" } ?? label)
-        .accessibilityHint(m.bag.isBusy ? "" : "Double-tap to connect your bag.")
+        .accessibilityHint(unpaired ? "Double-tap to pair your bag." : (m.bag.isBusy ? "" : "Double-tap to connect your bag."))
         .accessibilityAddTraits(.isButton)
-        .accessibilityAction { if !m.bag.isBusy { m.connectBag() } }
+        .accessibilityAction { tap() }
         .accessibilityAction(named: "Demo: add a random item") { m.demoDrop() }
     }
 
     private var connectedName: String? { if case let .connected(n) = m.bag { return n } else { return nil } }
+
+    private func tap() {
+        if unpaired { pair() } else if !m.bag.isBusy { m.connectBag() }
+    }
 }
 
 // MARK: - Hero: where you are
@@ -249,7 +269,7 @@ struct BagList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if m.lines.isEmpty {
-                EmptyBag(store: m.inStore?.name, bag: m.bag)
+                EmptyBag(store: m.inStore?.name, bag: m.bag, unpaired: m.pairedBags.isEmpty)
             } else {
                 HStack(alignment: .firstTextBaseline) {
                     Text("In your bag").font(TypeScale.caption).foregroundColor(Theme.muted)
@@ -277,6 +297,7 @@ struct BagList: View {
 private struct EmptyBag: View {
     let store: String?
     let bag: BagState
+    var unpaired = false
     var body: some View {
         let (title, why): (String, String) = {
             switch bag {
@@ -285,6 +306,7 @@ private struct EmptyBag: View {
             case .searching, .connecting:
                 return ("Looking for your bag", "Switch it on and keep it close.")
             case .problem, .off:
+                if unpaired { return ("No bag paired yet", "Pair your bag and items show up here as you drop them in.") }
                 return ("Your bag is empty", "Items show up here once your bag is connected.")
             }
         }()
@@ -400,41 +422,67 @@ func when(_ d: Date) -> String {
 
 // MARK: - Walk-out dock (thumb zone)
 
-/// There is no Pay button. The dock says what happens next and which card pays, and the bag mark is a live
-/// copy of the bag's light: it blinks when an item is accepted and breathes while you are leaving.
-/// When the bag can't count yet (`fix`), the dock carries the one action that fixes it.
+/// There is no Pay button. The dock says what happens next and which card pays (tap it to choose another), and
+/// the bag mark is a live copy of the bag's light: it blinks when an item is accepted and breathes while you are
+/// leaving. When the bag can't count yet (`fix`) or no card is on file, the dock carries the one action that fixes it.
 struct WalkOutDock: View {
     @EnvironmentObject var m: ShopModel
     @Environment(\.dynamicTypeSize) private var typeSize
     var fix = false
+    var onCards: () -> Void = {}
+    var onAddCard: () -> Void = {}
+    var onPair: () -> Void = {}
+
+    private enum Line { case none, muted(String), red(String) }
 
     var body: some View {
         let store = m.inStore
         let leaving = store?.leaving == true
-        let rawCard = m.payment.isEmpty ? "your card" : m.payment
-        let card = unbreakable(rawCard)
+        let noCard = m.payment.isEmpty
+        let card = unbreakable(m.payment)
         let ax = typeSize.isAccessibilitySize
         let has = m.count > 0
-        let (title, baseLine, showCard): (String, String, Bool) = {
-            if leaving { return has ? ("Charging as you leave", "", true) : ("Nothing to charge", "Your bag is empty", false) }
-            if store == nil { return ("Not priced yet", "Items are priced by the store you're in", false) }
-            if fix { return ("Connect your bag to start", "", false) }        // title, reason, pill: nothing else
-            if !has && m.bag.isBusy { return ("Looking for your bag", "Paying with", true) }
-            if has { return ("Just walk out", "Charged as you leave", true) }
-            return ("Fill your bag, then just walk out", "Paying with", true)
+        let unpaired = m.pairedBags.isEmpty
+        let (title, line, showCard): (String, Line, Bool) = {
+            if leaving {
+                if !has { return ("Nothing to charge", .muted("Your bag is empty"), false) }
+                return noCard ? ("Leaving", .none, false) : ("Charging as you leave", .none, true)
+            }
+            if store == nil { return ("Not priced yet", .muted("Items are priced by the store you're in"), false) }
+            if fix { return (unpaired ? "Pair your bag to start" : "Connect your bag to start", .none, false) }
+            let t = has ? (noCard ? "Add a card to just walk out" : "Just walk out")
+                        : (m.bag.isBusy ? "Looking for your bag" : "Fill your bag, then just walk out")
+            if noCard {
+                return (t, has ? .none : .muted("Add a card so leaving pays for you"), false)
+            }
+            return (t, .muted(has ? "Charged as you leave" : "Paying with"), true)
         }()
         // At accessibility sizes the card line is dropped, so "Paying with" carries the card itself.
-        let line1 = (ax && showCard && baseLine == "Paying with") ? "Paying with \(card)" : baseLine
+        let line1: Line = {
+            if ax, showCard, case .muted(let s) = line, s == "Paying with" { return .muted("Paying with \(card)") }
+            return line
+        }()
+        let addCardPill = noCard && store != nil && !fix && (has || !leaving)
+        // With items and no card, the consequence gets its own full-width red line above "Add card".
+        let cardNote: String? = (noCard && has && store != nil)
+            ? (leaving ? "No card on file. You'll pay at the store." : "No card on file. If you leave now, you'll pay at the store.") : nil
         let syncNote: String? = m.syncError == nil ? nil
             : (store != nil && has ? "Not synced yet. Bag It keeps trying. If you leave now, you'll be charged once it reconnects."
                                    : "Not synced yet. Bag It keeps trying.")
-        let problem: String? = { if case let .problem(msg) = m.bag { return msg } else { return nil } }()
+        let problem: String? = { if !unpaired, case let .problem(msg) = m.bag { return msg } else { return nil } }()
         let opensSettings = problem?.contains("Settings") == true
         let spokenLabel: String = {
-            let c = spoken(rawCard)
-            if leaving { return has ? "Charging \(money(m.total)) to \(c) as you leave." : "Leaving. Nothing to charge." }
+            let c = spoken(m.payment)
+            if leaving {
+                if !has { return "Leaving. Nothing to charge." }
+                return noCard ? "Leaving. No card on file, so you'll pay \(money(m.total)) at the store." : "Charging \(money(m.total)) to \(c) as you leave."
+            }
             if store == nil { return "Not priced yet. Items are priced by the store you're in. \(items(m.count)) in your bag." }
             if fix { return "\(title). \(problem ?? "")" }
+            if noCard {
+                return has ? "Add a card to just walk out. \(money(m.total)) for \(items(m.count)). No card on file. If you leave now, you'll pay at the store."
+                           : "\(title). Add a card so leaving pays for you."
+            }
             if has { return "Just walk out. \(money(m.total)) for \(items(m.count)), charged to \(c) as you leave." }
             return "\(title). Paying with \(c)."
         }() + (syncNote.map { " " + $0 } ?? "")
@@ -444,19 +492,30 @@ struct WalkOutDock: View {
             let layout = ax ? AnyLayout(VStackLayout(alignment: .leading, spacing: Space.m))
                             : AnyLayout(HStackLayout(alignment: .center, spacing: Space.l))
             layout {
+              Button(action: { if showCard { onCards() } }) {
               HStack(alignment: .center, spacing: Space.l) {
                 BagLight(leaving: leaving, connected: m.bag.isConnected)
                 VStack(alignment: .leading, spacing: Space.xs) {
                     Text(title).font(TypeScale.bodyStrong).foregroundColor(Theme.ink).fixedSize(horizontal: false, vertical: true)
-                    if !line1.isEmpty {
-                        Text(line1).font(TypeScale.caption).foregroundColor(Theme.muted)
-                            .lineLimit(ax ? 3 : 1).minimumScaleFactor(0.85)
+                    switch line1 {
+                    case .none: EmptyView()
+                    case .muted(let s):
+                        Text(s).font(TypeScale.caption).foregroundColor(Theme.muted).lineLimit(ax ? 3 : 1).minimumScaleFactor(0.85)
+                    case .red(let s):
+                        Text(s).font(TypeScale.caption).foregroundColor(Theme.bad).fixedSize(horizontal: false, vertical: true)
                     }
                     if showCard && !ax {
-                        Text(card).font(TypeScale.caption).foregroundColor(Theme.faint).lineLimit(1).minimumScaleFactor(0.85)
+                        HStack(spacing: Space.xs) {
+                            Text(card).font(TypeScale.caption).foregroundColor(Theme.faint).lineLimit(1).minimumScaleFactor(0.85)
+                            Image(systemName: "chevron.right").font(.system(.caption2).weight(.semibold)).foregroundColor(Theme.faint)
+                        }
                     }
                 }
               }
+              .contentShape(Rectangle())
+              }
+              .buttonStyle(.plain)
+              .disabled(!showCard)
                 if !ax { Spacer(minLength: 0) }
                 if has {
                     VStack(alignment: ax ? .leading : .trailing, spacing: Space.xs) {
@@ -470,14 +529,22 @@ struct WalkOutDock: View {
             .padding(.horizontal, Space.margin)
             .padding(.top, Space.l)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, (syncNote == nil && !fix) ? Space.l : Space.s)
+            .padding(.bottom, (syncNote == nil && cardNote == nil && !fix && !addCardPill) ? Space.l : Space.s)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(spokenLabel)
-            .accessibilityAddTraits(.updatesFrequently)
+            .accessibilityAddTraits(showCard ? [.updatesFrequently, .isButton] : .updatesFrequently)
+            .accessibilityHint(showCard ? "Choose which card pays." : "")
+            .accessibilityAction { if showCard { onCards() } }
             if let e = syncNote {
                 Text(e).font(TypeScale.caption).foregroundColor(Theme.bad).fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, Space.margin).padding(.bottom, fix ? Space.s : Space.l)
+                    .padding(.horizontal, Space.margin).padding(.bottom, (fix || addCardPill) ? Space.s : Space.l)
+            }
+            if let n = cardNote {
+                Text(n).font(TypeScale.caption).foregroundColor(Theme.bad).fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, Space.margin).padding(.bottom, Space.s)
+                    .accessibilityHidden(true)                      // already in the dock's spoken label
             }
             if fix {
                 VStack(alignment: .leading, spacing: Space.s) {
@@ -485,12 +552,15 @@ struct WalkOutDock: View {
                         Text(problem).font(TypeScale.caption).foregroundColor(Theme.bad).fixedSize(horizontal: false, vertical: true)
                             .accessibilityHidden(true)              // already in the dock's spoken label
                     }
-                    Button(opensSettings ? "Open Settings" : "Connect bag") {
-                        if opensSettings { openAppSettings() } else { m.connectBag() }
+                    Button(unpaired ? "Pair your bag" : (opensSettings ? "Open Settings" : "Connect bag")) {
+                        if unpaired { onPair() } else if opensSettings { openAppSettings() } else { m.connectBag() }
                     }
                     .buttonStyle(PillStyle())
                 }
                 .padding(.horizontal, Space.margin).padding(.bottom, Space.s)
+            } else if addCardPill {
+                Button("Add card", action: onAddCard).buttonStyle(PillStyle())
+                    .padding(.horizontal, Space.margin).padding(.bottom, Space.s)
             }
         }
         .dynamicTypeSize(...DynamicTypeSize.accessibility2)
