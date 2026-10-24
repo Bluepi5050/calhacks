@@ -16,7 +16,8 @@ public enum SmartBagConfig {
     public static let host = "https://maincloud.spacetimedb.com"
     public static let database = "smartcart-5dt35"
     public static let subprotocol = "v2.bsatn.spacetimedb"
-    public static let demoPayment = "Demo Visa •••• 4242"
+    /// Bag id the module accepts for "No bag with you? Use a demo bag": counts as connected, no Bluetooth.
+    public static let demoBagId = "DEMO"
 }
 
 // MARK: - Errors
@@ -31,11 +32,29 @@ public enum SmartBagError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .unavailable(let m), .connectionLost(let m): return m
-        case .timeout: return "SmartBag didn't answer in time."
-        case .server(let m): return String(m.prefix(160))
-        case .decode(let m): return "Unexpected reply from SmartBag (\(m))."
+        case .timeout: return "Bag It didn't answer in time."
+        case .server(let m): return String(Self.clean(m).prefix(160))
+        case .decode: return "Bag It is unavailable right now."
         }
     }
+}
+
+extension SmartBagError {
+    /// Procedure errors arrive as "The module instance encountered a fatal error: <message>". The message is
+    /// already shopper copy ("Email or password is wrong."), so only the wrapper is removed.
+    public static func clean(_ raw: String) -> String {
+        var m = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        for prefix in ["The module instance encountered a fatal error: ", "SenderError: "] where m.hasPrefix(prefix) {
+            m = String(m.dropFirst(prefix.count))
+        }
+        return m
+    }
+}
+
+/// What a screen shows for any failed call: the module's own message, or a plain connection line.
+public func userMessage(_ error: Error) -> String {
+    if let e = error as? SmartBagError, let d = e.errorDescription, !d.isEmpty { return d }
+    return "Couldn't reach Bag It. Check your connection and try again."
 }
 
 // MARK: - BSATN (little-endian; strings and byte arrays carry a u32 length prefix)
@@ -147,6 +166,14 @@ public struct CartState: Equatable, Sendable {
         return s
     }
 
+    /// shop_trips: Array<Receipt>, newest first.
+    public static func decodeReceipts(_ data: Data) throws -> [Receipt] {
+        var r = BsatnReader(data)
+        let list = try r.array { r in try Self.receipt(&r) }
+        if r.remaining != 0 { throw SmartBagError.decode("\(r.remaining) trailing bytes") }
+        return list.compactMap { $0 }
+    }
+
     static func receipt(_ r: inout BsatnReader) throws -> Receipt? {
         let id = try r.u64(), code = try r.string(), store = try r.string()
         let total = Int(try r.u32()), count = Int(try r.u32()), unpriced = Int(try r.u32())
@@ -158,6 +185,103 @@ public struct CartState: Equatable, Sendable {
         return Receipt(orderId: id, code: code, storeName: store, totalCents: total, itemCount: count, unpricedCount: unpriced,
                        status: status, payment: payment, paidMicros: paid, lines: items)
     }
+}
+
+// MARK: - Accounts (module v5): field order is the module's CardInfo / BagInfo / AccountState
+
+/// A saved card. Only brand, last four digits and expiry exist anywhere off the phone.
+public struct CardInfo: Equatable, Hashable, Codable, Sendable, Identifiable {
+    public let id: UInt64
+    public let brand: String, last4: String
+    public let expMonth: Int, expYear: Int          // expYear is 4-digit
+    public let nickname: String
+    public let isDefault: Bool
+    public init(id: UInt64, brand: String, last4: String, expMonth: Int, expYear: Int, nickname: String, isDefault: Bool) {
+        self.id = id; self.brand = brand; self.last4 = last4; self.expMonth = expMonth; self.expYear = expYear
+        self.nickname = nickname; self.isDefault = isDefault
+    }
+    /// Same format as the module's label (and so as CartState.payment / Receipt.payment).
+    public var label: String { (nickname.isEmpty ? "" : nickname + " ") + brand + " •••• " + last4 }
+    /// "08/29"
+    public var expiry: String { pad2(expMonth) + "/" + pad2(expYear % 100) }
+}
+
+public struct BagInfo: Equatable, Hashable, Codable, Sendable, Identifiable {
+    public let id: UInt64
+    public let bagId: String                        // the bag's Bluetooth name, e.g. SmartBag-3F2A, or DEMO
+    public let name: String                         // what the shopper called it
+    public let pairedMicros: Int64
+    public init(id: UInt64, bagId: String, name: String, pairedMicros: Int64) {
+        self.id = id; self.bagId = bagId; self.name = name; self.pairedMicros = pairedMicros
+    }
+    public var isDemo: Bool { bagId == SmartBagConfig.demoBagId }
+}
+
+public struct AccountState: Equatable, Codable, Sendable {
+    public let signedIn: Bool
+    public let name: String, email: String
+    public let cards: [CardInfo]
+    public let bags: [BagInfo]
+    public let payment: String                      // label of the default card, "" if none
+    public init(signedIn: Bool, name: String, email: String, cards: [CardInfo], bags: [BagInfo], payment: String) {
+        self.signedIn = signedIn; self.name = name; self.email = email; self.cards = cards; self.bags = bags; self.payment = payment
+    }
+    public static let signedOut = AccountState(signedIn: false, name: "", email: "", cards: [], bags: [], payment: "")
+    public var defaultCard: CardInfo? { cards.first { $0.isDefault } }
+    public var firstName: String { name.split(separator: " ").first.map(String.init) ?? "" }
+
+    public static func decode(_ data: Data) throws -> AccountState {
+        var r = BsatnReader(data)
+        let s = AccountState(
+            signedIn: try r.bool(), name: try r.string(), email: try r.string(),
+            cards: try r.array { r in
+                CardInfo(id: try r.u64(), brand: try r.string(), last4: try r.string(), expMonth: Int(try r.u32()),
+                         expYear: Int(try r.u32()), nickname: try r.string(), isDefault: try r.bool())
+            },
+            bags: try r.array { r in BagInfo(id: try r.u64(), bagId: try r.string(), name: try r.string(), pairedMicros: try r.i64()) },
+            payment: try r.string())
+        if r.remaining != 0 { throw SmartBagError.decode("\(r.remaining) trailing bytes") }
+        return s
+    }
+}
+
+func pad2(_ n: Int) -> String { n < 10 ? "0\(n)" : "\(n)" }
+
+// MARK: - Push (module v5.1) and nearby stores for background region monitoring
+
+/// Server push state for this phone. `serverPush` = the module has an FCM project configured.
+public struct PushState: Equatable, Sendable {
+    public let serverPush: Bool
+    public let registered: Bool
+    public let prefs: String                         // comma list of 'trips,security'
+    public static func decode(_ data: Data) throws -> PushState {
+        var r = BsatnReader(data)
+        let s = PushState(serverPush: try r.bool(), registered: try r.bool(), prefs: try r.string())
+        if r.remaining != 0 { throw SmartBagError.decode("\(r.remaining) trailing bytes") }
+        return s
+    }
+}
+
+public struct NearbyStore: Equatable, Sendable, Identifiable {
+    public let id: String, name: String, address: String
+    public let lat: Double, lng: Double
+    public let radiusM: Int, distanceM: Int
+    public static func decodeList(_ data: Data) throws -> [NearbyStore] {
+        var r = BsatnReader(data)
+        let list = try r.array { r in
+            NearbyStore(id: try r.string(), name: try r.string(), address: try r.string(), lat: try r.f64(), lng: try r.f64(),
+                        radiusM: Int(try r.u32()), distanceM: Int(try r.u32()))
+        }
+        if r.remaining != 0 { throw SmartBagError.decode("\(r.remaining) trailing bytes") }
+        return list
+    }
+}
+
+func decodeString(_ data: Data) throws -> String {
+    var r = BsatnReader(data)
+    let s = try r.string()
+    if r.remaining != 0 { throw SmartBagError.decode("\(r.remaining) trailing bytes") }
+    return s
 }
 
 // MARK: - Wire frames
@@ -250,7 +374,7 @@ final class URLSessionSocket: NSObject, URLSessionWebSocketDelegate, WebSocketCo
             task.resume()
             receive()
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [weak self] in
-                self?.finish("Can't reach SmartBag.")
+                self?.finish("Can't reach Bag It.")
             }
         }
         schedulePing()
@@ -381,8 +505,55 @@ public actor SpacetimeClient {
     public func setBag(_ name: String) async throws -> CartState { try await cart("shop_set_bag", Self.str(name)) }
     public func setPayment(_ label: String) async throws -> CartState { try await cart("shop_set_payment", Self.str(label)) }
 
+    // Accounts (module v5). Each returns the phone's AccountState. Passwords travel only inside these frames,
+    // over the wss socket; nothing here keeps them.
+    public func account() async throws -> AccountState { try await acct("account_state", Data()) }
+    public func signUp(name: String, email: String, password: String) async throws -> AccountState {
+        try await acct("account_sign_up", BsatnWriter().string(name).string(email).string(password).data)
+    }
+    public func signIn(email: String, password: String) async throws -> AccountState {
+        try await acct("account_sign_in", BsatnWriter().string(email).string(password).data)
+    }
+    public func signOut() async throws -> AccountState { try await acct("account_sign_out", Data()) }
+    public func setName(_ name: String) async throws -> AccountState { try await acct("account_set_name", Self.str(name)) }
+    public func deleteAccount(password: String) async throws -> AccountState { try await acct("account_delete", Self.str(password)) }
+    /// Only brand, last four, expiry and nickname: the full number and the CVC never reach this call.
+    public func addCard(brand: String, last4: String, expMonth: Int, expYear: Int, nickname: String, makeDefault: Bool) async throws -> AccountState {
+        try await acct("card_add", BsatnWriter().string(brand).string(last4).u32(UInt32(clamping: expMonth)).u32(UInt32(clamping: expYear))
+            .string(nickname).bool(makeDefault).data)
+    }
+    public func removeCard(id: UInt64) async throws -> AccountState { try await acct("card_remove", BsatnWriter().u64(id).data) }
+    public func setDefaultCard(id: UInt64) async throws -> AccountState { try await acct("card_set_default", BsatnWriter().u64(id).data) }
+    public func pairBag(bagId: String, name: String) async throws -> AccountState {
+        try await acct("bag_pair", BsatnWriter().string(bagId).string(name).data)
+    }
+    public func renameBag(id: UInt64, name: String) async throws -> AccountState {
+        try await acct("bag_rename", BsatnWriter().u64(id).string(name).data)
+    }
+    public func unpairBag(id: UInt64) async throws -> AccountState { try await acct("bag_unpair", BsatnWriter().u64(id).data) }
+    /// Walk-out receipts of every phone signed in to the account, newest first.
+    public func trips(limit: Int = 50) async throws -> [Receipt] {
+        try CartState.decodeReceipts(try await call("shop_trips", BsatnWriter().u32(UInt32(clamping: limit)).data))
+    }
+
+    /// Up to `limit` stores nearest to a point (for CLCircularRegion monitoring: iOS allows 20 regions).
+    public func nearbyStores(lat: Double, lng: Double, limit: Int = 20) async throws -> [NearbyStore] {
+        try NearbyStore.decodeList(try await call("shop_nearby_stores", BsatnWriter().f64(lat).f64(lng).u32(UInt32(clamping: limit)).data))
+    }
+
+    // Server push (module v5.1). push_register needs a signed-in phone and an FCM token.
+    public func pushRegister(token: String, prefs: String) async throws -> PushState {
+        try PushState.decode(try await call("push_register", BsatnWriter().string("ios").string(token).string(prefs).data))
+    }
+    public func pushSetPrefs(_ prefs: String) async throws -> PushState { try PushState.decode(try await call("push_set_prefs", Self.str(prefs))) }
+    public func pushUnregister() async throws -> PushState { try PushState.decode(try await call("push_unregister", Data())) }
+    public func pushStatus() async throws -> PushState { try PushState.decode(try await call("push_status", Data())) }
+    /// 'sent 1/1', 'push not configured', 'not registered', or an error description.
+    public func pushTest() async throws -> String { try decodeString(try await call("push_test", Data())) }
+
     private static func str(_ s: String) -> Data { BsatnWriter().string(s).data }
     private func cart(_ name: String, _ args: Data) async throws -> CartState { try CartState.decode(try await call(name, args)) }
+    private func acct(_ name: String, _ args: Data) async throws -> AccountState { try AccountState.decode(try await call(name, args)) }
 
     /// Closes the socket; the next call reconnects.
     public func disconnect() {
@@ -459,7 +630,7 @@ public actor SpacetimeClient {
         guard let r = try? StdbFrames.parseServer(f) else { return }
         switch r.outcome {
         case .returned(let d): resolve(r.requestId, .success(d))
-        case .internalError(let m): resolve(r.requestId, .failure(SmartBagError.server(m)))
+        case .internalError(let m): resolve(r.requestId, .failure(SmartBagError.server(SmartBagError.clean(m))))
         }
     }
 
@@ -478,7 +649,7 @@ public actor SpacetimeClient {
         if let t = tokens.token, !t.isEmpty { return t }
         let (code, body) = try await post("/v1/identity", bearer: nil)
         guard (200 ..< 300).contains(code), let t = Self.jsonToken(body) else {
-            throw SmartBagError.unavailable("SmartBag is unavailable right now.")
+            throw SmartBagError.unavailable("Bag It is unavailable right now.")
         }
         tokens.token = t
         return t
@@ -492,7 +663,7 @@ public actor SpacetimeClient {
             (code, body) = try await post("/v1/identity/websocket-token", bearer: try await identityToken())
         }
         guard (200 ..< 300).contains(code), let t = Self.jsonToken(body) else {
-            throw SmartBagError.unavailable("SmartBag is unavailable right now (\(code)).")
+            throw SmartBagError.unavailable("Bag It is unavailable right now.")
         }
         return t
     }
@@ -502,7 +673,7 @@ public actor SpacetimeClient {
     }
 
     private func post(_ path: String, bearer: String?) async throws -> (Int, Data) {
-        guard let url = URL(string: host + path) else { throw SmartBagError.unavailable("Bad SmartBag address.") }
+        guard let url = URL(string: host + path) else { throw SmartBagError.unavailable("Bag It is unavailable right now.") }
         var req = URLRequest(url: url, timeoutInterval: 15)
         req.httpMethod = "POST"
         req.httpBody = Data()
@@ -510,7 +681,7 @@ public actor SpacetimeClient {
         if let bearer { req.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization") }
         return try await withCheckedThrowingContinuation { k in
             URLSession.shared.dataTask(with: req) { data, resp, error in
-                if error != nil { k.resume(throwing: SmartBagError.unavailable("Can't reach SmartBag.")); return }
+                if error != nil { k.resume(throwing: SmartBagError.unavailable("Can't reach Bag It. Check your connection.")); return }
                 k.resume(returning: ((resp as? HTTPURLResponse)?.statusCode ?? 0, data ?? Data()))
             }.resume()
         }

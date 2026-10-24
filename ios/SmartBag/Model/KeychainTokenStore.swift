@@ -1,5 +1,6 @@
 // KeychainTokenStore.swift: the shopper's SpacetimeDB identity token, kept in the Keychain.
-// AfterFirstUnlock so the app can reconnect while the phone is locked in a pocket.
+// AfterFirstUnlock so the app can reconnect while the phone is locked in a pocket; ThisDeviceOnly so a restored
+// backup on another phone doesn't share this phone's cart, bag and card.
 
 import Foundation
 import Security
@@ -29,7 +30,7 @@ final class KeychainTokenStore: TokenStore, @unchecked Sendable {
             guard let v = newValue, let d = v.data(using: .utf8) else { return }
             var q = query
             q[kSecValueData as String] = d
-            q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+            q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             SecItemAdd(q as CFDictionary, nil)
         }
     }

@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>SmartBag</string>
+	<string>Bag It</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -25,15 +25,15 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>SmartBag connects to your bag over Bluetooth to see what you put in it.</string>
+	<string>Bag It connects to your bag over Bluetooth to see what you put in it.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>SmartBag uses your location to know which store you're in, and to charge your bag when you walk out.</string>
+	<string>Bag It uses your location to know which store you're in, and to charge your bag when you walk out.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Choose “Always” so SmartBag notices you leaving the store with your phone in your pocket, and charges your bag automatically.</string>
+	<string>Choose “Always” so Bag It notices you leaving the store with your phone in your pocket, and charges your bag automatically.</string>
 	<key>NSLocationTemporaryUsageDescriptionDictionary</key>
 	<dict>
 		<key>StoreDetection</key>
-		<string>SmartBag needs your precise location to tell which store you're in and when you've left it.</string>
+		<string>Bag It needs your precise location to tell which store you're in and when you've left it.</string>
 	</dict>
 	<key>UIBackgroundModes</key>
 	<array>
@@ -47,8 +47,6 @@
 	</dict>
 	<key>UILaunchScreen</key>
 	<dict/>
-	<key>UIUserInterfaceStyle</key>
-	<string>Light</string>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

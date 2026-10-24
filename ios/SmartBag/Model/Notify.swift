@@ -1,4 +1,7 @@
-// Notify.swift: the local "Paid $11.18 at Bayside Grocer" notification after a walk-out.
+// Notify.swift: local notifications (receipts, store arrivals, bag alerts, tests) and what a tap opens.
+// Copy and preferences live in Core/Notifications.swift; ShopModel decides when. Shown by the phone itself: no keys,
+// works with the app in the background. If the shopper force-quits Bag It, iOS may not wake it, so nothing here is
+// promised after a force-quit.
 
 import Foundation
 import UserNotifications
@@ -9,24 +12,42 @@ final class Notify: NSObject, UNUserNotificationCenterDelegate {
 
     func install() { center.delegate = self }
 
-    /// Optional: receipts still show in the app without it.
-    func requestPermission() {
-        center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
-    }
-
-    func paid(_ r: Receipt) {
+    func post(_ t: NotificationText) {
         let content = UNMutableNotificationContent()
-        content.title = r.isPaid ? "Paid \(money(r.totalCents)) at \(r.storeName)" : "\(money(r.totalCents)) due at \(r.storeName)"
-        content.body = "\(r.itemCount) item\(r.itemCount == 1 ? "" : "s")"
-            + (r.payment.isEmpty ? "" : " · \(r.payment)") + " · exit code \(r.code)"
+        content.title = t.title
+        content.body = t.body
         content.sound = .default
-        content.threadIdentifier = "receipts"
-        center.add(UNNotificationRequest(identifier: "paid-\(r.orderId)", content: content, trigger: nil))
+        content.threadIdentifier = t.kind.thread
+        content.userInfo = t.info
+        if t.kind == .trips || t.kind == .bag { content.interruptionLevel = .timeSensitive }   // shown only if the entitlement exists; else .active
+        // Same identifier for the same event: a second post replaces the first, it never stacks a duplicate.
+        center.add(UNNotificationRequest(identifier: t.id, content: content, trigger: nil))
     }
 
-    // Show the banner even when the app is open.
+    /// The system setting, in words: On / Off / Not asked.
+    func status() async -> UNAuthorizationStatus { await center.notificationSettings().authorizationStatus }
+
+    func requestPermission() async -> Bool {
+        (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+    }
+
+    // App open: the receipt, store and bag are already on screen, so no banner or sound; keep it in Notification Center.
+    // Server pushes (another phone's trip, account security) do show a banner: the screen doesn't know about them.
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
                                 withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        completionHandler([.banner, .list, .sound])
+        let remote = notification.request.trigger is UNPushNotificationTrigger
+        completionHandler(remote ? [.banner, .list, .sound] : [.list])
+    }
+
+    /// Tap: a trip or payment-due notification opens that receipt in Trips.
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        let info = response.notification.request.content.userInfo
+        let type = info["type"] as? String ?? ""
+        let code = info["code"] as? String
+        Task { @MainActor in
+            AppRouter.shared.open(type: type, code: code)
+            completionHandler()
+        }
     }
 }

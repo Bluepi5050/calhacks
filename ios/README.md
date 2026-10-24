@@ -1,12 +1,14 @@
-# SmartBag for iPhone
+# Bag It for iPhone (SmartBag)
 
-Native SwiftUI customer app for SmartBag (Cal Hacks 13.0). Drop groceries in the bag and just walk out:
+Native SwiftUI customer app for SmartBag (Cal Hacks 13.0), shown on the home screen as **Bag It** (the brand of bagitwith.us). Drop groceries in the bag and just walk out:
 the SpacetimeDB module `smartcart-5dt35` finds the store from the phone's location, prices the bag, and
 charges it the moment the phone leaves. There is no Pay button, no store picker, no catalog.
 
-Same backend and wire protocol as the Android 3.0 app: ONE WebSocket per phone speaking SpacetimeDB's v2
+Same backend and wire protocol as the Android app: ONE WebSocket per phone speaking SpacetimeDB's v2
 binary protocol (`v2.bsatn.spacetimedb`, `compression=None`), request/response procedure calls only
-(`shop_state`, `shop_locate`, `shop_bag_line`, `shop_remove`, `shop_set_bag`, `shop_set_payment`), no subscriptions.
+(`shop_state`, `shop_locate`, `shop_bag_line`, `shop_remove`, `shop_set_bag`; 1.2 adds the account procedures of module v5:
+`account_state`, `account_sign_up`, `account_sign_in`, `account_sign_out`, `account_set_name`, `account_delete`,
+`card_add`, `card_remove`, `card_set_default`, `bag_pair`, `bag_rename`, `bag_unpair`, `shop_trips`), no subscriptions.
 No third-party dependencies: URLSessionWebSocketTask, CoreBluetooth, CoreLocation, UserNotifications, CoreImage.
 
 ## Run it on your iPhone (free Apple ID works)
@@ -21,11 +23,14 @@ No third-party dependencies: URLSessionWebSocketTask, CoreBluetooth, CoreLocatio
    - If iOS says "Untrusted Developer": Settings > General > VPN & Device Management > your Apple ID > Trust.
 5. Free-team signing lasts 7 days; after that, press Run again from Xcode to re-sign.
 
-In the app: Get started, then allow Bluetooth, Location ("Allow While Using App", keep Precise on) and
-Notifications. iOS then offers "Change to Always Allow": accept it for the most reliable pocket walk-out.
+In the app (1.2): Create account (name, email, password; or "I already have an account"), then setup: one screen per permission
+(Allow Bluetooth, Allow Location "While Using App" with Precise on, accept "Change to Always Allow" later; Allow Notifications or Not now),
+Pair your bag (tap your bag in "Bags nearby", check that its light blinks, name it; or "No bag with you? Use a demo bag"),
+Add a card ("Use demo card" fills 4242 4242 4242 4242, 12/29, 123). Then the tabs: Shop · Trips · Wallet · Account.
+Logging in on another phone asks only for what's missing (permissions on that phone, a bag or a card if the account has none).
 
-Demo without hardware (hidden, same as Android): long-press the bag chip (top right) to drop a random item;
-long-press the store name to simulate walking out (two accurate fixes 300 m north, real GPS paused for 60 s),
+Demo without hardware (hidden): hold the bag chip (top right) for 1 s to drop a random item;
+hold the store name for 1.5 s to simulate walking out (both are also VoiceOver custom actions) (two accurate fixes 300 m north, real GPS paused for 60 s),
 which charges the bag, shows the receipt with its exit-pass QR, sends `PAID <code>` to the bag and posts a notification.
 
 ## How it works
@@ -39,7 +44,9 @@ which charges the bag, shows the receipt with its exit-pass QR, sends `PAID <cod
 | `SmartBag/Model/PhoneLocation.swift` | Continuous best-accuracy updates that keep running in the background; asks While Using, then Always; temporary full accuracy if Precise is off. |
 | `SmartBag/Model/Notify.swift` | "Paid $X at Store" local notification (also shown in the foreground). |
 | `SmartBag/Model/KeychainTokenStore.swift` | SpacetimeDB identity token in the Keychain (AfterFirstUnlock, so it works while locked). |
-| `SmartBag/Views/*` | Welcome ("Skip the checkout line"), shop screen with WalkOutBar, receipt screen with CoreImage QR `SMARTBAG-EXIT:code:id:total`. |
+| `SmartBag/Core/Cards.swift` | Pure Foundation. Card brand from prefix, Luhn, lengths, MM/YY, CVC, typing aids. Produces a `CardDraft` (brand, last four, expiry): the only card data that leaves the phone. |
+| `SmartBag/Model/AccountModel.swift` | Account on this phone (Foundation only, runs on Linux): sign up / log in / out / delete, wallet, bags, trips, setup steps, cached AccountState (never the password). Tells ShopModel which bags are paired and when the card changes. |
+| `SmartBag/Views/*` | 1.1 design (spec: Firebase `apps/smart-bag/app/mobile-design/ios`). Theme (Bag It tokens, slot mark, wordmark, pills), Welcome + one priming screen per permission, Shop (hero by store state, newest-first bag list, walk-out dock whose bag mark mirrors the bag's light), Receipt (peak + end, exit pass QR `SMARTBAG-EXIT:code:id:total`). |
 | `project.yml` | XcodeGen spec; `SmartBag.xcodeproj` was generated from it. |
 | `tools/verify-linux.sh`, `Tests/` | Linux/macOS verification (below). |
 
@@ -71,3 +78,76 @@ PhoneLocation, Notify and the Keychain store were reviewed but not compiled. Exp
   Keep SmartBag open in the background during a demo, and don't swipe it away.
 - Approximate location (Precise off) can't identify the store; the app shows a hint and asks for temporary full accuracy.
 - Not yet run on a physical iPhone or bag hardware.
+
+## 1.3: notifications and background walk-out
+
+- Local notifications (no keys, shown by the phone itself; copy in `Core/Notifications.swift`, same words as the
+  module's pushes): walk-out charged ("Paid $11.18 at Bayside Grocer" / "2 items with Visa •••• 4242. Exit code SRF6WQ."),
+  payment due ("$11.18 for 2 items. No card was on file: show exit code … to staff to pay." There is no in-app way to
+  settle a past trip, so it isn't promised), store arrival once per visit, bag disconnected for 20 s in a store with
+  items. Request id per event (`trip-<orderId>`, `store-<id>`, `bag-lost`), plus the persisted last-seen order, so a
+  receipt never notifies twice. With the app open: no banner (it's on screen), kept in Notification Center.
+- Tap a trip / payment-due notification -> Trips opens that receipt (by exit code); store / bag -> Shop (`AppRouter`).
+- Account › Notifications: Trips and receipts, Store arrivals, Bag alerts, Account security (all on; stored on the phone;
+  trips/security also sent with `push_set_prefs` when registered), notification permission, background location
+  (Always / While using with "Allow all the time"), Send a test notification.
+- Background walk-out (`Model/StoreRegions.swift`): with Always location, monitors the 20 nearest stores
+  (`shop_nearby_stores`, radius + 40 m), refreshed on significant location change. A crossing wakes or relaunches the app;
+  it reports two fresh fixes ≥ 3 s apart inside a background task (`ShopModel.checkNow`); on expiry it stops asking for
+  fixes and ends the task. Setup adds a "Pay with the app closed" screen (Always, with Not now).
+  Honest limits: With While using, keep the app open while leaving. iOS decides when region events arrive, and if the
+  shopper force-quits Bag It, iOS may not wake it: nothing is promised after a force-quit.
+- `PAID <code>` goes to the bag only for paid trips (payment due keeps the bag's light dark).
+- Server push (optional, OFF by default, `Model/Push.swift`): compiled only when the FirebaseMessaging Swift package is
+  added, active only when `GoogleService-Info.plist` is bundled; then the APNs token goes to Firebase and the FCM token
+  to `push_register`. Also needs a paid Apple Developer account (Push Notifications capability / aps-environment and an
+  APNs key in Firebase); a free Personal Team can't sign that, so the entitlement is not in the project. No keys are in
+  the repo. Server push has NOT been tested: no Firebase project, no APNs, no device.
+- Verified on Linux: push/nearby codecs, notification copy and prefs, live `shop_nearby_stores`, `push_register` /
+  `push_set_prefs` / `push_test` ("push not configured") / `push_unregister` with a fresh account, and the real
+  ShopModel through arrival (once per visit), bag alert, a region-woken exit check that walks out with no card
+  (payment due, no PAID, one notification). Not verifiable here: UserNotifications, CoreLocation region monitoring,
+  background tasks, APNs/FCM; all need Xcode and an iPhone.
+
+- Module v5.2 compatibility (durable order ownership): receipts show `Visa •••• 4242` without the nickname
+  (CartState.payment keeps the full label); Trips/Last trip show only trips owned by the current login (legacy orders
+  from before v5.2 appear nowhere, by design); sign-out / account switch / sign-up / delete are refused mid-trip with a
+  plain message, shown verbatim, and nothing local (state, cache, token) changes until the module confirms; the bag
+  name is re-sent (`shop_set_bag`) after every successful log-in / sign-up because v5.2 clears it on account changes.
+- Server copy note: the module's payment-due push says "Add a card in Bag It to settle it". No settle API exists, so
+  the phone's own notification says to show the exit code to staff; the server copy should change to match.
+
+## 1.2: accounts, wallet, pairing, tabs
+
+- Signed out: Welcome ('The bag that checks you out.') -> Create account / Log in. No forgot-password (no email service).
+  Field errors under the field, the module's own error text in red above the button (the "fatal error" wrapper is stripped).
+- Setup after sign-up / log-in (3-segment step bar): permissions (only if this phone hasn't granted them), Pair your bag
+  (skippable: "Set up later"), Add a card (skippable: "Add later"; with no card a walk-out is "payment due").
+- Tabs: Shop (the approved 1.1 screen; "Paying with <card>" opens the card picker; no card -> "Add card"; no bag paired -> the
+  chip and dock say "Pair your bag"), Trips (every receipt of the account, by day), Wallet (default card, other cards,
+  pay with / remove with inline confirmation), Account (bags with Connected / Not nearby, rename / unpair, Pair a bag,
+  permissions with their state, Sign out, Delete account, version).
+- Pairing (firmware v2): every bag advertises SmartBag-XXXX; the phone lists nearby bags with signal words, connects to the
+  tapped one and writes `HELLO`; the bag blinks three times and answers `BAG <name> fw2`. Lines starting with `BAG ` are
+  control lines and never reach `shop_bag_line`. After pairing, Bluetooth connects only to the account's bags (any bag
+  while none is paired). The demo bag (`DEMO`) counts as connected without Bluetooth; the hidden demo gestures still work.
+- The first-run demo payment is gone: payment always comes from the wallet (the module copies the default card's label
+  onto this phone). Card number and CVC are checked on the phone and cleared after submit; only brand, last four, expiry
+  and nickname are sent. Payments are simulated.
+- Cached for a fast signed-in launch: AccountState (name, email, card brands/last four, bags) in UserDefaults; the
+  identity token stays in the Keychain as before. Signing out clears the cache, stops the shop and hides the previous
+  shopper's Last trip on this phone.
+- Verification: `tools/verify-linux.sh` now also runs account codec tests (including bytes recorded from the live module
+  in `Tests/Fixtures`; refresh with `SMARTBAG_CAPTURE=1`), card checks, pairing helpers, a live account flow
+  (sign up, demo card, pair, walk-out charged to the card, trips, second card as default, second phone, sign out,
+  delete) and drives the real `AccountModel.swift` with `ShopModel.swift` through sign-up -> setup -> trip -> relaunch ->
+  sign-out -> delete. Renders of every new screen (HTML mirror, light + dark, large text for sign-up and wallet):
+  `python3 design/render_reference.py OUT --1.2`, PNGs in Mana Storage `smartbag/ios-ui/1.2/`.
+
+## 1.1 design (Bag It)
+
+- Name on the home screen and in copy: **Bag It**. `SmartBag` remains only in machine ids (bundle id, BLE name, repo paths).
+- Visual system: zinc neutrals, ink pills, one coral (#E8654A) that means only the bag's light (the slot in the mark, the item flash, the leaving line); green/red only for real status. Four Dynamic Type sizes (34/22/17/13), two weights, SF Mono for money and codes. Light and dark.
+- The bag mark in the dock is a live copy of the bag's LED: it blinks when an item is accepted and breathes while you're leaving. On the receipt its slot lights at the moment of the charge (the bag gets `PAID` at the same time), with the success haptic.
+- `design/render_reference.py` renders an HTML mirror of each key screen (NOT a build) for design review; screenshots in Mana Storage `smartbag/ios-ui/`.
+- 1.1 has not been compiled by Xcode yet: SwiftUI can't be built on Linux. Every Swift file passes `swiftc -parse`, and `tools/verify-linux.sh` (core client + ShopModel live trip) passes. Expect possible small compile fixes on the first Xcode build.

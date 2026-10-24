@@ -24,7 +24,7 @@ public enum BagProtocol {
 
     public static func parse(_ raw: String) -> BagEvent? {
         let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if line.isEmpty { return nil }
+        if line.isEmpty || isControl(line) { return nil }
         if line.hasPrefix("{") {
             guard let data = line.data(using: .utf8),
                   let j = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
@@ -61,6 +61,50 @@ public enum BagProtocol {
         if ev.op == "remove" { return "OK -\(ev.sku)" }
         if let l = lines.first(where: { $0.sku == ev.sku }), l.sold { return "OK +\(ev.sku) \(decimal(l.priceCents))" }
         return "ERR \(ev.sku) unknown"
+    }
+}
+
+// MARK: - Pairing (firmware v2)
+//
+// Every bag advertises a unique name, SmartBag-XXXX (v1 bags all say SmartBag-01). Writing "HELLO" makes its
+// light blink three times and it answers "BAG <name> fw2". Lines starting with "BAG " are control lines: they
+// never go to the database as items.
+
+public struct BagHello: Equatable, Sendable {
+    public let name: String
+    public let firmware: String
+}
+
+extension BagProtocol {
+    public static let hello = "HELLO"
+
+    public static func isControl(_ raw: String) -> Bool {
+        raw.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("BAG ")
+    }
+
+    /// "BAG SmartBag-3F2A fw2" -> (SmartBag-3F2A, fw2).
+    public static func helloReply(_ raw: String) -> BagHello? {
+        let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard line.hasPrefix("BAG ") else { return nil }
+        let parts = line.dropFirst(4).split(separator: " ", omittingEmptySubsequences: true)
+        guard let name = parts.first else { return nil }
+        return BagHello(name: String(name), firmware: parts.count > 1 ? String(parts[1]) : "")
+    }
+
+    /// What a shopper sees for a bag's Bluetooth name: "Bag 3F2A"; plain "Bag" for v1 bags (all SmartBag-01).
+    public static func displayName(_ bleName: String) -> String {
+        if bleName == SmartBagConfig.demoBagId { return "Demo bag" }
+        let prefix = "SmartBag-"
+        guard bleName.hasPrefix(prefix) else { return bleName.isEmpty ? "Bag" : bleName }
+        let suffix = String(bleName.dropFirst(prefix.count))
+        return suffix.isEmpty || suffix == "01" ? "Bag" : "Bag \(suffix)"
+    }
+
+    /// Signal strength in words, for the "Bags nearby" list.
+    public static func signal(rssi: Int) -> String {
+        if rssi >= -55 { return "Right here" }
+        if rssi >= -75 { return "Nearby" }
+        return "Farther away"
     }
 }
 
