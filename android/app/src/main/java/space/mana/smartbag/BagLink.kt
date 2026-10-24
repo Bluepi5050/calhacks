@@ -29,13 +29,30 @@ sealed class BagState {
     data class Problem(val message: String) : BagState()
 }
 
-/** BLE link to the bag over the Nordic UART Service: TX notifies text lines, RX takes acknowledgements. */
+/** A bag seen while pairing: BLE name (SmartBag-XXXX), signal strength, when it was last heard. */
+data class FoundBag(val address: String, val bleName: String, val rssi: Int, val seenAt: Long)
+
+/** "Bag 3F2A" from "SmartBag-3F2A"; v1 bags all advertise SmartBag-01 and are just "Bag". */
+fun bagDisplayName(bleName: String): String {
+    val suffix = bleName.removePrefix("SmartBag-").takeIf { bleName.startsWith("SmartBag-") }
+    return if (suffix.isNullOrEmpty() || suffix == "01") "Bag" else "Bag $suffix"
+}
+
+/** Lines the bag sends that are about the bag itself (pairing hello), never items: "BAG <name> fw2". */
+fun isControlLine(line: String) = line.trim().startsWith("BAG ")
+
+/**
+ * BLE link to the bag over the Nordic UART Service: TX notifies text lines, RX takes acknowledgements.
+ * Auto-connect only accepts bags in [allowed] (the account's paired bags; empty = any Bag It bag).
+ * Pairing uses [scanForPairing] (a live list with signal strength) and [connectTo] (one chosen bag).
+ */
 @SuppressLint("MissingPermission")
 @Suppress("DEPRECATION")
 class BagLink(
     private val ctx: Context,
     private val onLine: (String) -> Unit,
     private val onState: (BagState) -> Unit,
+    private val onControl: (String) -> Unit = {},
 ) {
     companion object {
         val NUS: UUID = UUID.fromString("6e400001-b5a3-f393-e0a9-e50e24dcca9e")
@@ -56,6 +73,15 @@ class BagLink(
     private val writes = ArrayDeque<ByteArray>()
     private var writing = false
 
+    /** BLE names of the account's paired bags. Empty: connect to any bag advertising the Bag It service. */
+    @Volatile var allowed: Set<String> = emptySet()
+    private var pairScanning = false
+    private var onFound: ((List<FoundBag>) -> Unit)? = null
+    private var onPairFail: ((String) -> Unit)? = null
+    private val found = LinkedHashMap<String, FoundBag>()
+    /** BLE name of the bag the link is connected (or connecting) to. */
+    val currentName: String get() = lastName
+
     val isEnabled: Boolean get() = adapter?.isEnabled == true
     val hasBluetooth: Boolean get() = adapter != null
 
@@ -65,6 +91,7 @@ class BagLink(
         val a = adapter
         if (a == null) { emit(BagState.Problem("This phone has no Bluetooth.")); return }
         if (!a.isEnabled) { emit(BagState.Problem("Turn on Bluetooth to connect your bag.")); return }
+        stopPairScan()
         close()
         userStopped = false
         retries = 0
@@ -98,7 +125,47 @@ class BagLink(
     }
 
     private val scanTimeout = Runnable {
-        if (scanning) { stopScan(); emit(BagState.Problem("No bag found nearby. Make sure it's switched on.")) }
+        if (scanning) { stopScan(); emit(BagState.Problem(if (allowed.isEmpty()) "No bag found nearby. Make sure it's switched on." else "Your bag isn't nearby. Make sure it's switched on.")) }
+    }
+
+    /** Pairing: drop any connection and list every Bag It bag in range (callback on the main thread). */
+    fun scanForPairing(onUpdate: (List<FoundBag>) -> Unit, onFail: (String) -> Unit = {}): String? {
+        val a = adapter ?: return "This phone has no Bluetooth."
+        if (!a.isEnabled) return "off"
+        stopPairScan()                                  // "Scan again" restarts cleanly (a second startScan would fail)
+        close()
+        onPairFail = onFail
+        userStopped = true
+        val scanner = a.bluetoothLeScanner ?: return "Bluetooth is still starting. Try again."
+        found.clear()
+        onFound = onUpdate
+        pairScanning = true
+        val filters = listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(NUS)).build())
+        val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
+        return try { scanner.startScan(filters, settings, scanCb); onUpdate(emptyList()); null } catch (e: SecurityException) {
+            pairScanning = false; "denied"
+        } catch (e: Exception) { pairScanning = false; "Couldn't search for bags." }
+    }
+
+    fun stopPairScan() {
+        if (!pairScanning) return
+        pairScanning = false
+        onFound = null
+        onPairFail = null
+        try { adapter?.bluetoothLeScanner?.stopScan(scanCb) } catch (_: Exception) {}
+    }
+
+    /** Pairing: connect to one bag the shopper picked from the list. */
+    fun connectTo(address: String, bleName: String) {
+        stopPairScan()
+        close()
+        val a = adapter ?: return
+        userStopped = false
+        retries = 0
+        lastName = bleName
+        emit(BagState.Connecting(lastName))
+        try { gatt = a.getRemoteDevice(address).connectGatt(ctx, false, gattCb, BluetoothDevice.TRANSPORT_LE) }
+        catch (e: Exception) { emit(BagState.Problem("Couldn't connect to that bag.")) }
     }
 
     private fun stopScan() {
@@ -114,22 +181,41 @@ class BagLink(
         val g = gatt
         gatt = null
         rx = null
-        if (g != null) try { g.disconnect(); g.close() } catch (_: Exception) {}
+        if (g != null) {
+            try { g.disconnect(); g.close() } catch (_: Exception) {}
+            emit(BagState.Off)                        // the connection is gone: never leave the app saying "connected"
+        }
     }
 
     private val scanCb = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             main.post {
+                val name = result.device.name ?: result.scanRecord?.deviceName ?: ""
+                if (pairScanning) {
+                    if (name.isEmpty()) return@post
+                    found[result.device.address] = FoundBag(result.device.address, name, result.rssi, System.currentTimeMillis())
+                    onFound?.invoke(found.values.toList())
+                    return@post
+                }
                 if (!scanning) return@post
+                val ok = allowed
+                if (ok.isNotEmpty() && name !in ok) return@post            // someone else's bag: keep looking for ours
                 stopScan()
-                lastName = result.device.name ?: result.scanRecord?.deviceName ?: "Your bag"
+                lastName = name.ifEmpty { "Your bag" }
                 emit(BagState.Connecting(lastName))
                 gatt = result.device.connectGatt(ctx, false, gattCb, BluetoothDevice.TRANSPORT_LE)
             }
         }
         override fun onScanFailed(errorCode: Int) {
-            scanning = false
-            emit(BagState.Problem("Bluetooth search failed ($errorCode)."))
+            main.post {
+                if (pairScanning) {                       // the pairing list reports its own failure; the bag chip stays as it was
+                    pairScanning = false
+                    onPairFail?.invoke("Couldn't search for bags. Try again.")
+                    return@post
+                }
+                scanning = false
+                emit(BagState.Problem("Couldn't search for your bag. Try again."))
+            }
         }
     }
 
@@ -209,7 +295,7 @@ class BagLink(
     private val flush = Runnable {
         val l = buffer.toString().trim()
         buffer.setLength(0)
-        if (l.isNotEmpty()) onLine(l)
+        if (l.isNotEmpty()) deliver(l)
     }
 
     private fun receive(bytes: ByteArray) {
@@ -220,13 +306,16 @@ class BagLink(
             while (i >= 0) {
                 val line = buffer.substring(0, i).trim()
                 buffer.delete(0, i + 1)
-                if (line.isNotEmpty()) onLine(line)
+                if (line.isNotEmpty()) deliver(line)
                 i = buffer.indexOf("\n")
             }
             main.removeCallbacks(flush)
             if (buffer.isNotEmpty()) main.postDelayed(flush, 300)
         }
     }
+
+    /** Control lines ("BAG <name> fw2") are about the bag itself and never reach the shop as items. */
+    private fun deliver(line: String) { if (isControlLine(line)) onControl(line) else onLine(line) }
 
     private fun pump() {
         val g = gatt ?: return

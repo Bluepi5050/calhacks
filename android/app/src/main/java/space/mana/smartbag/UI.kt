@@ -111,6 +111,8 @@ val DarkPalette = Palette(
 val LocalPalette = staticCompositionLocalOf { LightPalette }
 /** True when the system "Remove animations" setting is on (or in screenshot tests): show end states, no motion. */
 val LocalReduceMotion = staticCompositionLocalOf { false }
+/** False inside the tab host: the tab bar already sits on the navigation bar, so bottom bars must not pad for it again. */
+val LocalNavPad = staticCompositionLocalOf { true }
 
 /** Four sizes, two weights (400 / 600). Numbers use tabular figures; the exit code is monospace. */
 object Type {
@@ -151,7 +153,7 @@ fun BagItTheme(dark: Boolean = isSystemInDarkTheme(), reduceMotion: Boolean? = n
     }
 }
 
-private val big: Boolean @Composable get() = LocalDensity.current.fontScale > 1.3f
+internal val big: Boolean @Composable get() = LocalDensity.current.fontScale > 1.3f
 
 @Composable
 fun Txt(
@@ -255,6 +257,12 @@ object Glyph {
     val store = icon("store", "M4.5 10.5V20h15v-9.5", "M3 10.5L5 4h14l2 6.5z", "M10 20v-5h4v5")
     val receipt = icon("receipt", "M6 3h12v18l-3-2-3 2-3-2-3 2z", "M9 8h6", "M9 12h6")
     val chevron = icon("chevron", "M10 6l6 6-6 6")
+    val back = icon("back", "M14 6l-6 6 6 6")
+    val plus = icon("plus", "M12 5v14", "M5 12h14")
+    // Tabs: the tote echoes the slot mark (die-cut body, slot under the top edge).
+    val bag = icon("bag", "M4.5 5h15l-.8 14.9a1.2 1.2 0 0 1-1.2 1.1H6.5a1.2 1.2 0 0 1-1.2-1.1z", "M10 8.5h4")
+    val card = icon("card", "M5 6h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z", "M3 10h18", "M7 14.5h3")
+    val person = icon("person", "M15.5 8a3.5 3.5 0 1 1-7 0a3.5 3.5 0 1 1 7 0z", "M5 20a7 7 0 0 1 14 0")
 }
 
 @Composable
@@ -301,12 +309,12 @@ fun SmallPill(text: String, description: String, onClick: () -> Unit) {
 fun Eyebrow(text: String, color: Color = LocalPalette.current.muted) = Txt(text, Type.caption, color, bold = true)
 
 @Composable
-private fun BottomArea(modifier: Modifier = Modifier, minBody: Dp = 0.dp, topLine: (@Composable () -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
+internal fun BottomArea(modifier: Modifier = Modifier, minBody: Dp = 0.dp, topLine: (@Composable () -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
     val p = LocalPalette.current
     Column(modifier.fillMaxWidth().background(p.surface)) {
         if (topLine != null) topLine() else Hairline()
         // minBody keeps the bar as tall as the one it replaces (content bottom-aligned), so the top line does not move.
-        Box(Modifier.fillMaxWidth().navigationBarsPadding().heightIn(min = minBody), contentAlignment = Alignment.BottomCenter) {
+        Box(Modifier.fillMaxWidth().then(if (LocalNavPad.current) Modifier.navigationBarsPadding() else Modifier).imePadding().heightIn(min = minBody), contentAlignment = Alignment.BottomCenter) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp), content = content)
         }
     }
@@ -314,7 +322,7 @@ private fun BottomArea(modifier: Modifier = Modifier, minBody: Dp = 0.dp, topLin
 
 /** The coral line: one hairline-thick progress line on the top edge of the bottom bar, drawn to [fill] in [color]. */
 @Composable
-private fun EdgeLine(fill: Float, color: Color) {
+internal fun EdgeLine(fill: Float, color: Color) {
     Box(Modifier.fillMaxWidth().height(2.dp)) {
         Hairline(Modifier.align(Alignment.Center))
         Box(Modifier.fillMaxWidth(fill).fillMaxHeight().background(color))
@@ -332,8 +340,12 @@ data class Perms(
     val ready get() = nearby && location
 }
 
+/**
+ * Permissions (setup step 1 after sign-up, or whenever a signed-in phone is missing one). [step] shows the setup
+ * step bar; null = a returning shopper who lost a permission. Denied / approximate states keep the 3.1 recovery copy.
+ */
 @Composable
-fun WelcomeScreen(perms: Perms, onContinue: () -> Unit, onSettings: () -> Unit) {
+fun PermissionsScreen(perms: Perms, onContinue: () -> Unit, onSettings: () -> Unit, step: Int? = null) {
     val p = LocalPalette.current
     val denied = perms.asked && !perms.ready
     val problem = when {
@@ -351,26 +363,25 @@ fun WelcomeScreen(perms: Perms, onContinue: () -> Unit, onSettings: () -> Unit) 
                 Spacer(Modifier.height(8.dp))
                 Pill("Open Settings", Modifier.fillMaxWidth(), primary = false, onClick = onSettings)
             } else Pill("Open Settings", Modifier.fillMaxWidth(), onClick = onSettings)
-        } else Pill("Get started", Modifier.fillMaxWidth(), onClick = onContinue)
+        } else Pill("Continue", Modifier.fillMaxWidth(), onClick = onContinue)
     }
-    // At large text sizes, first run puts "Get started" after the list (so nobody accepts prompts they never saw);
+    // At large text sizes "Continue" comes after the list (so nobody accepts prompts they never saw);
     // the recovery buttons stay pinned, because the reason is already at the top of the page.
     val inline = big && problem == null
     Column(Modifier.fillMaxSize().background(p.bg).statusBarsPadding()) {
+        if (step != null) StepBar(step)
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp)) {
-            Spacer(Modifier.height(32.dp))
-            Logo(32.dp)
-            Spacer(Modifier.height(if (denied) 32.dp else 48.dp))
+            Spacer(Modifier.height(if (step != null) 24.dp else 32.dp))
             if (problem != null) {
                 Txt("Almost there", Type.title, bold = true, modifier = Modifier.semantics { heading() })
                 Spacer(Modifier.height(8.dp))
                 Txt(problem, Type.body, p.bad, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
             } else {
-                Txt("The bag that checks you out.", Type.display, bold = true, modifier = Modifier.semantics { heading() })
-                Spacer(Modifier.height(16.dp))
-                Txt("Drop groceries in your bag and just walk out. Your receipt lands here as you leave.", Type.body, p.muted)
+                Txt("Set up your phone", Type.title, bold = true, modifier = Modifier.semantics { heading() })
+                Spacer(Modifier.height(8.dp))
+                Txt("Bag It needs these to hear your bag and to know when you leave the store.", Type.body, p.muted)
             }
-            Spacer(Modifier.height(if (denied) 24.dp else 40.dp))
+            Spacer(Modifier.height(32.dp))
             Eyebrow("Bag It needs")
             Spacer(Modifier.height(8.dp))
             Need(Glyph.nearby, "Nearby devices", "To hear from your bag.", if (perms.nearby) "ok" else if (perms.asked) "Off" else "")
@@ -379,8 +390,6 @@ fun WelcomeScreen(perms: Perms, onContinue: () -> Unit, onSettings: () -> Unit) 
                 if (perms.location) "ok" else if (perms.approximate) "Approximate" else if (perms.asked) "Off" else "")
             Hairline()
             Need(Glyph.bell, "Notifications", "For your receipt. Optional.", if (perms.notifications) "ok" else "")
-            Spacer(Modifier.height(24.dp))
-            Txt("Payments are simulated with a demo card (${card(DEMO_CARD)}). No money moves.", Type.caption, p.faint)
             Spacer(Modifier.height(24.dp))
             if (inline) { actions(); Spacer(Modifier.height(24.dp)); Spacer(Modifier.navigationBarsPadding()) }
         }
@@ -423,6 +432,8 @@ data class ShopUi(
     val bag: BagState, val store: StoreState, val payment: String, val total: Int, val count: Int,
     val lines: List<Line>, val paid: Receipt?, val flash: Pair<String, Int>?, val syncError: String?,
     val lastTrip: Receipt? = null,
+    val noBag: Boolean = false,          // signed in with no paired bag: the chip and the dock ask to pair one
+    val noCard: Boolean = false,         // empty wallet: walk-outs would be payment due
 )
 
 interface ShopActions {
@@ -433,6 +444,10 @@ interface ShopActions {
     fun finishReceipt()
     fun demoDrop()
     fun demoWalkOut()
+    fun openPairing() {}
+    fun openAddCard() {}
+    /** The dock's "Paying with <card>" line: the card picker sheet. */
+    fun chooseCard() {}
 }
 
 private val BagState.connected get() = this is BagState.Connected
@@ -440,6 +455,7 @@ private val BagState.connected get() = this is BagState.Connected
 private val BagState.busy get() = this is BagState.Connecting || this == BagState.Searching || this == BagState.Off
 private val ShopUi.leaving get() = (store as? StoreState.InStore)?.leaving == true
 private val ShopUi.blocked get() = store == StoreState.NoLocation || store is StoreState.Offline
+private val ShopUi.needsPairing get() = noBag && !bag.connected
 private val ShopUi.unsold get() = if (store is StoreState.InStore) lines.filter { !it.sold }.sumOf { it.qty } else 0
 
 /**
@@ -447,7 +463,7 @@ private val ShopUi.unsold get() = if (store is StoreState.InStore) lines.filter 
  * while the coral line on the bottom edge finishes drawing (it stays where the eye left it).
  */
 @Composable
-fun ShopScreen(s: ShopUi, a: ShopActions) {
+fun ShopScreen(s: ShopUi, a: ShopActions, bottomInset: Dp = 0.dp, onFullScreen: (Boolean) -> Unit = {}) {
     val reduce = LocalReduceMotion.current
     var reviewing by rememberSaveable { mutableStateOf(-1L) }        // a "Last trip" receipt reopened by the shopper
     val live = s.paid
@@ -458,7 +474,11 @@ fun ShopScreen(s: ShopUi, a: ShopActions) {
     val barBody = remember { floatArrayOf(0f) }                     // height of the walk-out bar's body (px), for the receipt
     val density = LocalDensity.current
     val review = s.lastTrip?.takeIf { it.id == reviewing && live == null }
+    val navPadOff = !LocalNavPad.current
+    val navBottom = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
     val target: Pair<Receipt, Boolean>? = live?.let { it to true } ?: review?.let { it to false }
+    val full = target != null
+    LaunchedEffect(full) { onFullScreen(full) }
     AnimatedContent(
         targetState = target,
         contentKey = { it?.first?.id },
@@ -468,8 +488,17 @@ fun ShopScreen(s: ShopUi, a: ShopActions) {
         if (t != null) {
             val done = { if (t.second) a.finishReceipt() else reviewing = -1L }
             BackHandler { done() }
-            ReceiptScreen(t.first, peak = t.second, onDone = done, minBar = if (t.second) with(density) { barBody[0].toDp() } else 0.dp)
-        } else ShopBody(if (live != null) frozen[0] ?: s else s, a, onLastTrip = { reviewing = it }, onBar = { if (live == null) barBody[0] = it })
+            // In the tab host the walk-out bar sits above the tab bar: the receipt's bar is that much taller, so the
+            // coral line completes exactly where it was half drawn while the tab bar fades away.
+            // After the peak the bar settles to the 3.1 height (walk-out bar + navigation bar), so nothing is wasted.
+            val bar = with(density) { barBody[0].toDp() }
+            CompositionLocalProvider(LocalNavPad provides true) {
+                ReceiptScreen(t.first, peak = t.second, onDone = done, minBar = if (t.second) bar + bottomInset else 0.dp,
+                    settleBar = if (t.second) bar + (if (navPadOff) navBottom else 0.dp) else null)
+            }
+        } else Box(Modifier.fillMaxSize().padding(bottom = bottomInset)) {
+            ShopBody(if (live != null) frozen[0] ?: s else s, a, onLastTrip = { reviewing = it }, onBar = { if (live == null) barBody[0] = it })
+        }
     }
 }
 
@@ -483,7 +512,7 @@ private fun ShopBody(s: ShopUi, a: ShopActions, onLastTrip: (Long) -> Unit, onBa
     val action = hasAction(s)
     val fill by animateFloatAsState(if (s.leaving) 0.5f else 0f, tween(if (LocalReduceMotion.current) 0 else 600), label = "leave")
     Column(Modifier.fillMaxSize().background(p.bg)) {
-        Header(s.bag, a)
+        Header(s.bag, a, pair = s.needsPairing)
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
             Spacer(Modifier.height(16.dp))
             StoreBlock(s, a)
@@ -491,7 +520,7 @@ private fun ShopBody(s: ShopUi, a: ShopActions, onLastTrip: (Long) -> Unit, onBa
             if (big && status) {
                 Spacer(Modifier.height(24.dp))
                 EdgeLine(fill, p.coral)
-                Column(Modifier.padding(horizontal = 24.dp, vertical = 16.dp)) { ShopStatus(s) }
+                Column(Modifier.padding(horizontal = 24.dp, vertical = 16.dp)) { ShopStatus(s, a) }
                 Hairline()
             }
             Spacer(Modifier.height(32.dp))
@@ -499,7 +528,7 @@ private fun ShopBody(s: ShopUi, a: ShopActions, onLastTrip: (Long) -> Unit, onBa
             Spacer(Modifier.height(24.dp))
         }
         if (!big && (status || action)) BottomArea(Modifier.onSizeChanged { onBar(it.height.toFloat()) }, topLine = { EdgeLine(fill, p.coral) }) {
-            if (status) ShopStatus(s)
+            if (status) ShopStatus(s, a)
             if (status && action) Spacer(Modifier.height(16.dp))
             if (action) ShopAction(s, a)
         } else if (big && action) BottomArea { ShopAction(s, a) }
@@ -508,22 +537,26 @@ private fun ShopBody(s: ShopUi, a: ShopActions, onLastTrip: (Long) -> Unit, onBa
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Header(b: BagState, a: ShopActions) {
+private fun Header(b: BagState, a: ShopActions, pair: Boolean = false) {
     val p = LocalPalette.current
     val haptic = LocalHapticFeedback.current
-    val canConnect = !b.connected && !b.busy
-    val label = when (b) {
+    val canConnect = !b.connected && !b.busy || pair
+    val label = when {
+        pair -> "Pair your bag"
+        else -> when (b) {
         is BagState.Connected -> "Bag connected"
         is BagState.Connecting -> "Connecting…"
         BagState.Searching, BagState.Off -> "Looking for your bag…"
         else -> "Bag not connected"
+        }
     }
+    val connectNow = { if (pair) a.openPairing() else a.connectBag() }
     val reduce = LocalReduceMotion.current
     val big = big
     // Connected = a status, not a button: the outline and side padding fade away with the same 400ms as the slot lighting.
     val pad by animateDpAsState(if (b.connected) 0.dp else 12.dp, tween(if (reduce) 0 else 400), label = "pad")
     val outline by animateColorAsState(
-        when { b.connected -> p.hair.copy(alpha = 0f); b is BagState.Problem -> p.bad.copy(alpha = 0.5f); else -> p.hair },
+        when { b.connected -> p.hair.copy(alpha = 0f); b is BagState.Problem && !pair -> p.bad.copy(alpha = 0.5f); else -> p.hair },
         tween(if (reduce) 0 else 400), label = "outline")
     val slot by animateColorAsState(if (b.connected) p.coral else p.bg, tween(if (reduce) 0 else 400), label = "slot")
     val chip = @Composable {
@@ -534,13 +567,13 @@ private fun Header(b: BagState, a: ShopActions) {
                 .clearAndSetSemantics {
                     contentDescription = label
                     liveRegion = LiveRegionMode.Polite
-                    if (canConnect) { role = Role.Button; onClick("Connect bag") { a.connectBag(); true } }
+                    if (canConnect) { role = Role.Button; onClick(if (pair) "Pair your bag" else "Connect bag") { connectNow(); true } }
                 }
                 .clip(RoundedCornerShape(50))
                 .combinedClickable(
                     indication = if (canConnect) LocalIndication.current else null,
                     interactionSource = remember { MutableInteractionSource() },
-                    onClick = { if (canConnect) a.connectBag() },
+                    onClick = { if (canConnect) connectNow() },
                     onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); a.demoDrop() },
                 ),
             contentAlignment = Alignment.Center,
@@ -708,10 +741,11 @@ private fun BagBlock(s: ShopUi, a: ShopActions) {
             // An empty tote, slot unlit: what the bag looks like before anything goes in.
             Mark(48.dp, slot = null, ink = p.strong)
             Spacer(Modifier.height(16.dp))
-            Txt("Drop something in", Type.body, bold = true, align = TextAlign.Center)
+            Txt(if (s.needsPairing) "No bag yet" else "Drop something in", Type.body, bold = true, align = TextAlign.Center)
             Spacer(Modifier.height(4.dp))
             Txt(
                 when {
+                    s.needsPairing -> "Pair your bag and items show up here as they go in."
                     !s.bag.connected && !s.bag.busy -> "Connect your bag first. Items show up here as they go in."
                     inStore != null -> "Items show up here with ${inStore.name}'s prices."
                     else -> "Items show up here, priced when you're in a store."
@@ -778,27 +812,30 @@ private fun LineRow(l: Line, inStore: StoreState.InStore?, flash: Pair<String, I
     }
 }
 
-private fun hasAction(s: ShopUi) = s.blocked || (!s.bag.connected && !s.bag.busy && !s.leaving)
-private fun hasStatus(s: ShopUi) = (!s.blocked && (s.store is StoreState.InStore || s.count > 0 || (s.bag.busy && s.bag != BagState.Off))) ||
+// No bag paired: outside a store the chip ("Pair your bag") is the one ask; in a store the dock asks too.
+private fun hasAction(s: ShopUi) = s.blocked || (s.needsPairing && !s.leaving && s.store is StoreState.InStore) ||
+    (!s.needsPairing && !s.bag.connected && !s.bag.busy && !s.leaving) || (s.noCard && !s.needsPairing)
+private fun hasStatus(s: ShopUi) = (!s.blocked && (s.store is StoreState.InStore || s.count > 0 || (s.bag.busy && s.bag != BagState.Off && !s.needsPairing) || s.noCard)) ||
     (s.syncError != null && s.store !is StoreState.Offline)
 
 /** The thumb zone, part 1: the walk-out status and the bag total. There is no Pay button. */
 @Composable
-private fun ShopStatus(s: ShopUi) {
+private fun ShopStatus(s: ShopUi, a: ShopActions) {
     val p = LocalPalette.current
     val inStore = s.store as? StoreState.InStore
     val bagDown = !s.bag.connected && !s.bag.busy
     if (!s.blocked) {
         when {
-            inStore != null && bagDown && s.count == 0 && !inStore.leaving -> {
-                Txt("Connect your bag", Type.title, bold = true, modifier = Modifier.semantics { heading() })
+            inStore != null && (bagDown || s.needsPairing) && s.count == 0 && !inStore.leaving -> {
+                Txt(if (s.needsPairing) "Pair your bag" else "Connect your bag", Type.title, bold = true, modifier = Modifier.semantics { heading() })
                 Spacer(Modifier.height(4.dp))
                 Txt("Then drop groceries in and just walk out.", Type.caption, p.muted)
             }
-            inStore != null -> WalkOutStatus(s, inStore, s.payment.ifEmpty { "your card" })
+            inStore != null -> WalkOutStatus(s, inStore, s.payment.ifEmpty { "your card" }, a)
             s.count > 0 -> TotalRow("Bag total", s.total, "Priced when you're in a store.")
+            s.noCard -> Txt("Add a card so leaving pays for you.", Type.caption, p.muted, balanced = true)
         }
-        if (s.bag.busy && s.bag != BagState.Off && !s.leaving) {
+        if (s.bag.busy && s.bag != BagState.Off && !s.leaving && !s.needsPairing) {
             if (inStore != null || s.count > 0) Spacer(Modifier.height(12.dp))
             Txt("Looking for your bag. Keep it nearby and switched on.", Type.caption, p.muted, balanced = true)
         }
@@ -817,7 +854,9 @@ private fun ShopAction(s: ShopUi, a: ShopActions) {
     when {
         s.store == StoreState.NoLocation -> Pill("Turn on location", Modifier.fillMaxWidth(), onClick = a::locationSettings)
         s.store is StoreState.Offline -> Pill("Try again", Modifier.fillMaxWidth(), onClick = a::retry)
-        else -> {
+        s.needsPairing && !s.leaving && s.store is StoreState.InStore -> Pill("Pair your bag", Modifier.fillMaxWidth(), primary = s.count == 0, onClick = a::openPairing)
+        s.needsPairing -> {}
+        !s.bag.connected && !s.bag.busy && !s.leaving -> {
             val b = s.bag
             if (b is BagState.Problem) {
                 Txt(b.message + if (s.count > 0 && s.store is StoreState.InStore) " Items you add now won't count until it's connected." else "",
@@ -826,29 +865,62 @@ private fun ShopAction(s: ShopUi, a: ShopActions) {
             }
             Pill("Connect bag", Modifier.fillMaxWidth(), primary = s.count == 0 || b is BagState.Problem, onClick = a::connectBag)
         }
+        s.noCard -> Pill("Add card", Modifier.fillMaxWidth(), onClick = a::openAddCard)
     }
 }
 
 @Composable
-private fun WalkOutStatus(s: ShopUi, st: StoreState.InStore, pay: String) {
+private fun WalkOutStatus(s: ShopUi, st: StoreState.InStore, pay: String, a: ShopActions) {
     val p = LocalPalette.current
-    if (s.payment.isEmpty() && s.count > 0) { TotalRow(if (st.leaving) "On your way out" else "Just walk out", s.total, "Setting up your demo card…"); return }
+    // No card on file: say plainly what leaving means now (payment due at the store).
+    if (s.noCard || s.payment.isEmpty()) {
+        val due = "No card on file. If you leave now, you'll pay at the store."
+        when {
+            st.leaving -> TotalRow("On your way out", s.total, due, p.bad)
+            s.count > 0 -> TotalRow("Bag total", s.total, due, p.bad)
+            else -> {
+                Txt("Fill your bag, then just walk out", Type.title, bold = true, modifier = Modifier.semantics { heading() })
+                Spacer(Modifier.height(4.dp))
+                Txt("Add a card so leaving pays for you.", Type.caption, p.muted, balanced = true)
+            }
+        }
+        return
+    }
+    // The card line opens the card picker (the dock is the one place you'd want to switch cards mid-trip).
+    val pick = a::chooseCard
     when {
-        st.leaving -> TotalRow("On your way out", s.total, "We'll charge ${card(pay)} in a moment. Step back inside to keep shopping.")
-        s.count > 0 -> TotalRow("Just walk out", s.total, "We'll charge ${card(pay)} when you leave ${st.name}.")
-        else -> {
+        st.leaving -> TotalRow("On your way out", s.total, "We'll charge ${card(pay)} in a moment. Step back inside to keep shopping.", onSub = pick)
+        s.count > 0 -> TotalRow("Just walk out", s.total, "We'll charge ${card(pay)} when you leave ${st.name}.", onSub = pick)
+        else -> Column(
+            Modifier.fillMaxWidth().clickable(role = Role.Button, onClickLabel = "Change card", onClick = pick)
+                .semantics(mergeDescendants = true) { },
+        ) {
             Txt("Fill your bag, then just walk out", Type.title, bold = true, modifier = Modifier.semantics { heading() })
             Spacer(Modifier.height(4.dp))
-            Txt("Paying with ${card(pay)}. No checkout, no scanning.", Type.caption, p.muted, balanced = true)
+            CardLine("Paying with ${card(pay)}. No checkout, no scanning.")
         }
     }
 }
 
+/** A caption ending in a small chevron: tap to change the card. */
 @Composable
-private fun TotalRow(title: String, total: Int, sub: String) {
+private fun CardLine(text: String, color: Color = LocalPalette.current.muted) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Txt(text, Type.caption, color, balanced = true, modifier = Modifier.weight(1f, fill = false))
+        Spacer(Modifier.width(4.dp))
+        GlyphImage(Glyph.chevron, LocalPalette.current.faint, 16.dp)
+    }
+}
+
+@Composable
+private fun TotalRow(title: String, total: Int, sub: String, subColor: Color? = null, onSub: (() -> Unit)? = null) {
     val p = LocalPalette.current
     val shown by animateIntAsState(total, tween(if (LocalReduceMotion.current) 0 else 500), label = "total")
-    Column(Modifier.semantics(mergeDescendants = true) { contentDescription = "$title. Total ${money(total)}. $sub" }) {
+    Column(
+        Modifier.fillMaxWidth()
+            .then(if (onSub != null) Modifier.clickable(role = Role.Button, onClickLabel = "Change card", onClick = onSub) else Modifier)
+            .semantics(mergeDescendants = true) { contentDescription = "$title. Total ${money(total)}. $sub" },
+    ) {
         if (big) {
             Txt(title, Type.title, bold = true)
             Txt(money(shown), Type.title, bold = true, num = true)
@@ -858,7 +930,7 @@ private fun TotalRow(title: String, total: Int, sub: String) {
             Txt(money(shown), Type.title, bold = true, num = true)
         }
         Spacer(Modifier.height(4.dp))
-        Txt(sub, Type.caption, p.muted, balanced = true)
+        if (onSub != null) CardLine(sub) else Txt(sub, Type.caption, subColor ?: p.muted, balanced = true)
     }
 }
 
@@ -876,7 +948,7 @@ fun qr(text: String, size: Int = 360, ink: Int = 0xFF18181B.toInt()): ImageBitma
  * [peak] = this receipt was just charged (play the moment once); false = reopened from "Last trip" (end state, quiet).
  */
 @Composable
-fun ReceiptScreen(r: Receipt, peak: Boolean, onDone: () -> Unit, minBar: Dp = 0.dp) {
+fun ReceiptScreen(r: Receipt, peak: Boolean, onDone: () -> Unit, minBar: Dp = 0.dp, settleBar: Dp? = null) {
     val p = LocalPalette.current
     val reduce = LocalReduceMotion.current
     val view = LocalView.current
@@ -980,7 +1052,10 @@ fun ReceiptScreen(r: Receipt, peak: Boolean, onDone: () -> Unit, minBar: Dp = 0.
         // The coral line finishes on the same edge where it was half drawn while leaving. Only Done is pinned,
         // so this bar is the same height as the walk-out bar it replaces.
         val navBottom = with(LocalDensity.current) { WindowInsets.navigationBars.getBottom(this).toDp() }
-        BottomArea(minBody = (minBar - 2.dp - navBottom).coerceAtLeast(0.dp), topLine = { EdgeLine(line.value, if (due) p.bad else p.coral) }) {
+        // In the tab host the bar starts taller (the line completes where it was drawn, above the tab bar) and settles
+        // to the walk-out bar's own height once the peak has played. Reduced motion: settled from the start.
+        val barH by animateDpAsState(if (settleBar != null && still) settleBar else minBar, tween(if (reduce) 0 else 240, easing = FastOutSlowInEasing), label = "bar")
+        BottomArea(minBody = (barH - 2.dp - navBottom).coerceAtLeast(0.dp), topLine = { EdgeLine(line.value, if (due) p.bad else p.coral) }) {
             Pill("Done", Modifier.fillMaxWidth(), onClick = onDone)
         }
     }

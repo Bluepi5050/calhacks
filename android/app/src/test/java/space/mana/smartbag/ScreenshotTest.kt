@@ -33,15 +33,15 @@ class ScreenshotTest {
     private val out = File(System.getProperty("shots.dir") ?: "/tmp/smartbag-shots")
 
     data class Device(val name: String, val qualifiers: String, val font: Float, val dark: Boolean)
+    // 3.2: the four configs Scott asked for (3.1's 360 font 2.0 is still rendered with -Pshots.all=true).
     private val devices = listOf(
         Device("411-light", "w411dp-h891dp-xhdpi", 1f, false),
         Device("360-light", "w360dp-h780dp-xhdpi", 1f, false),
         Device("411-light-font2", "w411dp-h891dp-xhdpi", 2f, false),
-        Device("360-light-font2", "w360dp-h780dp-xhdpi", 2f, false),
         Device("411-dark", "w411dp-h891dp-night-xhdpi", 1f, true),
-    )
+    ) + if (System.getProperty("shots.all") == "true") listOf(Device("360-light-font2", "w360dp-h780dp-xhdpi", 2f, false)) else emptyList()
 
-    private val nop = object : ShopActions {
+    private val nop = object : AppActions {
         override fun connectBag() {}
         override fun locationSettings() {}
         override fun retry() {}
@@ -67,9 +67,38 @@ class ScreenshotTest {
     private fun ui(store: StoreState, b: BagState = bag, lines: List<Line> = emptyList(), paid: Receipt? = null, flash: Pair<String, Int>? = null, err: String? = null, last: Receipt? = null) =
         ShopUi(b, store, "Demo Visa •••• 4242", lines.filter { it.sold }.sumOf { it.lineCents }, lines.filter { it.sold }.sumOf { it.qty }, lines, paid, flash, err, last)
 
+    // ---- 3.2 account fixtures
+    private val visa = CardInfo(11, "Visa", "4242", 12, 2029, "Demo", true)
+    private val mc = CardInfo(12, "Mastercard", "4444", 1, 2031, "", false)
+    private val amex = CardInfo(13, "Amex", "0005", 6, 2028, "Work", false)
+    private val myBag = BagInfo(21, "SmartBag-3F2A", "Scott's bag", 0)
+    private val acct = AccountState(true, "Scott Chiang", "scott@bagitwith.us", listOf(visa, mc, amex), listOf(myBag), visa.label)
+    private val perms = Perms(true, true, true, true)
+    private fun app(shop: ShopUi, a: AccountState = acct, trips: List<Receipt>? = null, pairing: PairUi? = null) =
+        AppUi(shop, a, perms, trips = trips, pairing = pairing, connectedBag = "SmartBag-3F2A", version = "3.2")
+    private val now = System.currentTimeMillis()
+    private val trips = listOf(
+        receipt.copy(id = 1051, code = "M4XQ7T", paidAt = now - 20 * 60_000L),
+        receipt.copy(id = 1049, code = "H2KD9P", storeName = "Mission Fresh", total = 1147, count = 3, paidAt = now - 3 * 3600_000L),
+        receipt.copy(id = 1040, code = "Q8ZR2C", total = 598, count = 2, status = "payment_due", payment = "", paidAt = now - 26 * 3600_000L),
+        receipt.copy(id = 1033, code = "B7NW4E", storeName = "Mission Fresh", total = 2210, count = 6, paidAt = now - 4 * 86_400_000L),
+    )
+    private val found = listOf(
+        FoundBag("A", "SmartBag-3F2A", -48, now), FoundBag("B", "SmartBag-91C0", -68, now), FoundBag("C", "SmartBag-01", -84, now),
+    )
+
+    /** Tabs (or any screen) with a sheet already open, the way AppRoot hosts them. */
+    @Composable
+    private fun Host(ui: AppUi, sheet: (@Composable () -> Unit)? = null, content: @Composable () -> Unit) {
+        val sheets = androidx.compose.runtime.remember { Sheets().also { s -> if (sheet != null) s.show(sheet) } }
+        androidx.compose.runtime.CompositionLocalProvider(LocalSheets provides sheets, LocalAppUi provides ui) {
+            Box(Modifier.fillMaxSize()) { content(); SheetLayer(sheets) }
+        }
+    }
+
     private val states: List<Pair<String, @Composable () -> Unit>> = listOf(
-        "01-welcome" to { WelcomeScreen(Perms(false, false, false, false), {}, {}) },
-        "02-welcome-denied" to { WelcomeScreen(Perms(true, false, false, true, canAskAgain = false), {}, {}) },
+        "01-permissions" to { PermissionsScreen(Perms(false, false, false, false), {}, {}) },
+        "02-permissions-denied" to { PermissionsScreen(Perms(true, false, false, true, canAskAgain = false), {}, {}) },
         "03-finding-store" to { ShopScreen(ui(StoreState.Locating, BagState.Searching), nop) },
         "04-location-off" to { ShopScreen(ui(StoreState.NoLocation), nop) },
         "05-offline" to { ShopScreen(ui(StoreState.Offline("No internet connection."), lines = filled.take(2)), nop) },
@@ -80,11 +109,52 @@ class ScreenshotTest {
         "10-leaving" to { ShopScreen(ui(bay.copy(leaving = true), lines = filled.take(3)), nop) },
         "11-receipt-paid" to { ShopScreen(ui(StoreState.Away(null, null), paid = receipt), nop) },
         "13-last-trip" to { ShopScreen(ui(StoreState.Away("Bayside Grocer", 240), last = receipt.copy(paidAt = System.currentTimeMillis() - 5 * 60_000L)), nop) },
-        "14-welcome-approximate" to { WelcomeScreen(Perms(true, false, true, true, approximate = true), {}, {}) },
+        "14-permissions-approximate" to { PermissionsScreen(Perms(true, false, true, true, approximate = true), {}, {}) },
         "16-walkout-to-receipt" to { WalkOutFlip(ui(bay.copy(leaving = true), lines = filled.take(3)), receipt) },
         "15-bag-off-in-store-items" to { ShopScreen(ui(bay, BagState.Problem("Turn on Bluetooth to connect your bag."), lines = filled.take(3)), nop) },
         "12-receipt-due" to { ShopScreen(ui(StoreState.Away(null, null), paid = receipt.copy(status = "payment_due", payment = "", unpriced = 0)), nop) },
+
+        // ---- 3.2: accounts, setup, pairing, wallet, tabs
+        "20-welcome" to { WelcomeScreen({}, {}) },
+        "21-create-account" to { AuthScreen(true, {}, {}, { _, _, _, _ -> }) },
+        "22-create-account-errors" to { AuthScreen(true, {}, {}, { _, _, _, _ -> }, preview = Triple("", "scott@", "short"), previewTried = true) },
+        "23-log-in-error" to { AuthScreen(false, {}, {}, { _, _, _, _ -> }, preview = Triple("", "scott@bagitwith.us", ""), previewError = "Email or password is wrong.") },
+        "24-setup-permissions" to { PermissionsScreen(Perms(false, false, false, false), {}, {}, step = 1) },
+        "25-pair-scan" to { PairScanScreen(PairUi("scanning", found, now - 4000), setOf("SmartBag-3F2A"), 2, null, {}, {}, {}, {}, {}, onLater = {}, now = now) },
+        "26-pair-none-found" to { PairScanScreen(PairUi("scanning", emptyList(), now - 20_000), emptySet(), null, {}, {}, {}, {}, {}, {}, onLater = null, now = now) },
+        "27-pair-bluetooth-off" to { PairScanScreen(PairUi("off", emptyList(), now), emptySet(), 2, null, {}, {}, {}, {}, {}, onLater = {}, now = now) },
+        "28-pair-check" to { PairCheckScreen(Probe("A", "SmartBag-3F2A", connected = true, helloCount = 1), 2, {}, {}, {}) },
+        "29-pair-connecting" to { PairCheckScreen(Probe("A", "SmartBag-3F2A"), null, {}, {}, {}) },
+        "30-pair-name" to { PairNameScreen("SmartBag-3F2A", "Scott's bag", 2, { _, _ -> }, {}) },
+        "31-pair-done" to { PairDoneScreen("Scott's bag", false, 2, "Continue") {} },
+        "32-add-card-setup" to { AddCardScreen(true, 3, null, {}, { _, _ -> }, {}) },
+        "33-add-card-errors" to { AddCardScreen(false, null, {}, null, { _, _ -> }, {}, preview = listOf("4242424242424241", "0924", "12", ""), previewTried = true) },
+        "34-tabs-shop-filling" to { Host(app(ui(bay, lines = filled))) { MainTabs(app(ui(bay, lines = filled)), nop) } },
+        "35-tabs-shop-no-card" to { val a = acct.copy(cards = emptyList(), payment = ""); val s = ui(bay, lines = filled.take(3)).copy(payment = "", noCard = true); Host(app(s, a)) { MainTabs(app(s, a), nop) } },
+        "36-tabs-shop-no-bag" to { val a = acct.copy(bags = emptyList()); val s = ui(StoreState.Away("Bayside Grocer", 240), BagState.Problem("No bag found nearby.")).copy(noBag = true); Host(app(s, a)) { MainTabs(app(s, a), nop) } },
+        "37-card-picker" to { val u = app(ui(bay, lines = filled.take(3))); Host(u, { CardPickerSheet(acct, { _, _ -> }, {}) }) { MainTabs(u, nop) } },
+        "38-trips" to { val u = app(ui(bay), trips = trips); Host(u) { MainTabs(u, nop, initialTab = 1) } },
+        "39-trips-empty" to { val u = app(ui(bay), trips = emptyList()); Host(u) { MainTabs(u, nop, initialTab = 1) } },
+        "40-wallet" to { val u = app(ui(bay)); Host(u) { MainTabs(u, nop, initialTab = 2) } },
+        "41-wallet-empty" to { val a = acct.copy(cards = emptyList(), payment = ""); val u = app(ui(bay).copy(noCard = true), a); Host(u) { MainTabs(u, nop, initialTab = 2) } },
+        "42-card-remove-confirm" to { val u = app(ui(bay)); Host(u, { CardSheet(acct, visa, { _, _ -> }, { _, _ -> }, {}, initialConfirm = true) }) { MainTabs(u, nop, initialTab = 2) } },
+        "43-account" to { val a = acct.copy(bags = listOf(myBag, BagInfo(22, "DEMO", "Demo bag", 0))); val u = app(ui(bay), a); Host(u) { MainTabs(u, nop, initialTab = 3) } },
+        "44-bag-sheet" to { val u = app(ui(bay)); Host(u, { BagSheet(myBag, { _, _ -> }, { }, {}) }) { MainTabs(u, nop, initialTab = 3) } },
+        "45-delete-account" to { val u = app(ui(bay)); Host(u, { DeleteSheet(nop, {}) }) { MainTabs(u, nop, initialTab = 3) } },
+        "46-tabs-walkout-to-receipt" to { TabsFlip() },
+        "48-add-card-only-step" to { androidx.compose.runtime.CompositionLocalProvider(LocalSetupProgress provides (1 to 1)) { AddCardScreen(true, 3, null, {}, { _, _ -> }, {}) } },
+        "47-trip-receipt" to { val u = app(ui(bay), trips = trips); Host(u) { MainTabs(u, nop, initialTab = 1, initialReview = trips[2]) } },
     )
+
+    /** The walk-out flip inside the tab host: the receipt replaces shop + tab bar, the line completes in place. */
+    @Composable
+    private fun TabsFlip() {
+        var paid by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<Receipt?>(null) }
+        androidx.compose.runtime.LaunchedEffect(Unit) { androidx.compose.runtime.withFrameNanos { }; androidx.compose.runtime.withFrameNanos { }; paid = receipt }
+        val leaving = ui(bay.copy(leaving = true), lines = filled.take(3))
+        val s = if (paid == null) leaving else leaving.copy(store = StoreState.Away(null, null), lines = emptyList(), total = 0, count = 0, paid = paid, lastTrip = paid)
+        Host(app(s)) { MainTabs(app(s), nop) }
+    }
 
     /** The real path: the shop (leaving) renders first, then the charge arrives and the shop hands over to the receipt. */
     @Composable

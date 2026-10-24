@@ -37,7 +37,13 @@ class WatchService : Service() {
         return START_STICKY
     }
 
+    override fun onDestroy() {
+        (application as SmartBagApp).shop.serviceRunning = false
+        super.onDestroy()
+    }
+
     companion object {
+        fun stop(ctx: Context) { try { ctx.stopService(Intent(ctx, WatchService::class.java)) } catch (_: Exception) {} }
         fun start(ctx: Context) {
             val i = Intent(ctx, WatchService::class.java)
             try { if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i) } catch (_: Exception) {}

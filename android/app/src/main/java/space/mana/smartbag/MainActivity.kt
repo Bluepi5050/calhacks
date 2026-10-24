@@ -21,17 +21,21 @@ class MainActivity : ComponentActivity() {
     private val prefs by lazy { getSharedPreferences("smartbag", 0) }
     private var perms by mutableStateOf(Perms(false, false, false, false))
 
+    private val signedIn get() = model.account?.signedIn == true
+
     private val permissionAsk = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         prefs.edit().putBoolean("asked_permissions", true).putInt("ask_count", prefs.getInt("ask_count", 0) + 1).apply()
         refreshPerms()
-        if (perms.ready) { startLocation(); connectBag() }
+        if (perms.ready && signedIn) { startLocation(); connectBag() }
     }
 
     // Notifications are optional (receipts still show in the app), so they are asked for but not required.
     private fun askList(): Array<String> =
         if (Build.VERSION.SDK_INT >= 33) permissions() + Manifest.permission.POST_NOTIFICATIONS else permissions()
     // Declined or not: connect() either connects or reports "Turn on Bluetooth…", so the bag never sits in Off.
-    private val bluetoothAsk = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { model.link.connect() }
+    private val bluetoothAsk = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (model.pairing != null) model.startPairing() else model.link.connect()
+    }
 
     private fun permissions(): Array<String> =
         if (Build.VERSION.SDK_INT >= 31) arrayOf(
@@ -63,6 +67,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun connectBag() {
+        if (model.pairing != null) return            // the pairing screen owns Bluetooth right now
         if (!model.link.hasBluetooth) { model.link.connect(); return }
         if (!model.link.isEnabled) {
             try { bluetoothAsk.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)) } catch (_: Exception) { model.link.connect() }
@@ -73,7 +78,7 @@ class MainActivity : ComponentActivity() {
         try { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null))) } catch (_: Exception) {}
     }
 
-    private val actions = object : ShopActions {
+    private val actions = object : AppActions {
         override fun connectBag() = this@MainActivity.connectBag()
         override fun locationSettings() { try { startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) } catch (_: Exception) {} }
         override fun retry() = model.retry()
@@ -81,6 +86,39 @@ class MainActivity : ComponentActivity() {
         override fun finishReceipt() = model.finishReceipt()
         override fun demoDrop() = model.demoDrop()
         override fun demoWalkOut() = model.demoWalkOut()
+
+        // Start watching right away, but leave Bluetooth alone when the pairing step is next (it owns the radio then).
+        private fun afterSignIn(signUp: Boolean, done: (String?, AccountState?) -> Unit): (String?) -> Unit = { err ->
+            val a = model.account
+            if (err == null && perms.ready) {
+                startLocation()
+                if (!signUp && a != null && a.bags.isNotEmpty()) connectBag()
+            }
+            done(err, a)
+        }
+        override fun signUp(name: String, email: String, password: String, done: (String?, AccountState?) -> Unit) =
+            model.accountCall({ Api.signUp(name, email, password) }, afterSignIn(true, done), model.refreshBag())
+        override fun signIn(email: String, password: String, done: (String?, AccountState?) -> Unit) =
+            model.accountCall({ Api.signIn(email, password) }, afterSignIn(false, done), model.refreshBag())
+        override fun signOut(done: (String?) -> Unit) = model.accountCall({ Api.signOut() }, done, model.refreshBag())
+        override fun deleteAccount(password: String, done: (String?) -> Unit) = model.accountCall({ Api.deleteAccount(password) }, done, model.refreshBag())
+        override fun addCard(c: NewCard, done: (String?) -> Unit) =
+            model.accountCall({ Api.cardAdd(c.brand, c.last4, c.expMonth, c.expYear, c.nickname, c.makeDefault) }, done, model.refreshBag())
+        override fun setDefaultCard(id: Long, done: (String?) -> Unit) = model.accountCall({ Api.cardSetDefault(id) }, done, model.refreshBag())
+        override fun removeCard(id: Long, done: (String?) -> Unit) = model.accountCall({ Api.cardRemove(id) }, done, model.refreshBag())
+        override fun renameBag(id: Long, name: String, done: (String?) -> Unit) = model.accountCall({ Api.bagRename(id, name) }, done)
+        override fun unpairBag(id: Long, done: (String?) -> Unit) = model.accountCall({ Api.bagUnpair(id) }, done)
+        override fun loadTrips() = model.loadTrips()
+        override fun askPermissions() = permissionAsk.launch(askList())
+        override fun appSettings() = this@MainActivity.appSettings()
+        override fun bluetoothOn() { try { bluetoothAsk.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)) } catch (_: Exception) {} }
+        override fun startPairing() = model.startPairing()
+        override fun probe(b: FoundBag) = model.probe(b)
+        override fun confirmProbe() = model.confirmProbe()
+        override fun rejectProbe() = model.rejectProbe()
+        override fun pair(bleName: String, name: String, done: (String?) -> Unit) = model.pair(bleName, name, done)
+        override fun pairDemo(done: (String?) -> Unit) = model.pairDemo(done)
+        override fun endPairing() = model.endPairing()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -88,12 +126,9 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         refreshPerms()
         setContent {
-            BagItTheme {
-                if (!perms.ready) WelcomeScreen(perms, onContinue = { permissionAsk.launch(askList()) }, onSettings = ::appSettings)
-                else ShopScreen(model.ui(), actions)
-            }
+            BagItTheme { AppRoot(model.appUi(perms), actions) }
         }
-        if (perms.ready && savedInstanceState == null) { startLocation(); connectBag() }
+        if (perms.ready && signedIn && savedInstanceState == null) { startLocation(); connectBag() }
     }
 
     override fun onPause() {
@@ -106,7 +141,7 @@ class MainActivity : ComponentActivity() {
         (application as SmartBagApp).foreground = true
         val wasReady = perms.ready
         refreshPerms()                         // the user may be back from Settings
-        if (perms.ready) {
+        if (perms.ready && signedIn) {
             if (!wasReady) connectBag()
             if (model.location.enabled && model.store is StoreState.NoLocation) model.refreshStore()
             startLocation()
@@ -115,4 +150,15 @@ class MainActivity : ComponentActivity() {
 }
 
 /** Snapshot of the model for the UI (reads Compose state, so the screen recomposes when it changes). */
-fun ShopModel.ui() = ShopUi(bag, store, payment, total, count, lines.toList(), paid, flash, syncError, lastTrip)
+fun ShopModel.ui(): ShopUi {
+    val a = account?.takeIf { it.signedIn }
+    return ShopUi(bag, store, payment, total, count, lines.toList(), paid, flash, syncError, lastTrip,
+        noBag = a != null && a.bags.isEmpty(), noCard = a != null && a.cards.isEmpty())
+}
+
+fun ShopModel.appUi(perms: Perms) = AppUi(
+    shop = ui(), account = account ?: SIGNED_OUT, perms = perms,
+    trips = trips, tripsLoading = tripsLoading, tripsError = tripsError, pairing = pairing,
+    connectedBag = (bag as? BagState.Connected)?.name?.takeIf { !demoStandIn }, version = BuildConfig.VERSION_NAME,
+    demoActive = demoStandIn,
+)
