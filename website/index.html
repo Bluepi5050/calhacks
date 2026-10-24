@@ -39,8 +39,7 @@ p{margin:0;text-wrap:pretty}
 .skip{position:absolute;left:-9999px;top:10px;z-index:30;background:var(--btn);color:var(--btn-ink);padding:12px 16px;border-radius:999px;text-decoration:none}
 .skip:focus{left:12px}
 .label{font:500 12.5px/1.3 var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--faint)}
-header{position:sticky;top:0;z-index:20;background:var(--bg);border-bottom:1px solid transparent;transition:border-color .2s}
-header.scrolled{border-bottom-color:var(--line)}
+header{position:sticky;top:0;z-index:20;background:var(--bg);border-bottom:1px solid var(--line)}
 .bar{display:flex;align-items:center;gap:28px;height:60px}
 .logo{display:flex;align-items:center;min-height:44px;color:var(--ink);margin-right:auto;border-radius:6px}
 .logo svg{height:26px;width:auto}
@@ -56,7 +55,6 @@ nav.top a:hover{color:var(--ink)}
 .btn-2{border-color:var(--line2);color:var(--ink)}
 .btn-2:hover{border-color:var(--muted)}
 .btn-s{height:44px;padding:0 18px;font-size:14px}
-main section{scroll-margin-top:64px}
 .hero{text-align:center;padding:clamp(32px,5vw,64px) 0 clamp(56px,8vw,104px)}
 .hero h1{font-size:clamp(42px,6.2vw,72px);margin:16px auto 0;max-width:13ch}
 .lede{font-size:clamp(17px,1.9vw,21px);color:var(--muted);max-width:31em;margin:20px auto 0;line-height:1.5}
@@ -80,28 +78,25 @@ figcaption{font-size:14px;color:var(--faint);margin-top:12px;text-align:center}
 @media (max-width:899px){.steps{grid-template-columns:1fr;row-gap:28px}}
 .demo-film{margin:0;max-width:1120px}
 .demo-film figcaption{text-align:left}
-.tour{display:flex;flex-direction:column;align-items:center}
-.pages{display:flex;flex-wrap:wrap;justify-content:center;gap:2px 6px;margin:0 0 clamp(20px,3vw,28px)}
-.pages[hidden],.platsel[hidden],.step[hidden]{display:none}
-.pages button{cursor:pointer;min-height:44px;min-width:44px;padding:0 12px;border:0;background:none;color:var(--muted);font:500 15px/1 var(--sans);border-radius:999px;position:relative;transition:color .2s ease-out}
-.pages button:hover{color:var(--ink)}
-.pages button[aria-selected=true]{color:var(--ink);font-weight:600}
-.pages button[aria-selected=true]::after{content:"";position:absolute;left:12px;right:12px;bottom:6px;height:2px;border-radius:2px;background:var(--ink)}
-.phone{width:clamp(232px,64vw,280px);padding:7px;border:1px solid var(--line2);border-radius:46px;background:var(--bg);margin:0}
-.screen{position:relative;aspect-ratio:560/1213;border-radius:39px;overflow:hidden;background:var(--bg2);touch-action:pan-y;user-select:none;-webkit-user-select:none}
-.screen picture,.screen img{position:absolute;inset:0;width:100%;height:100%}
-.screen img{object-fit:cover;object-position:top;-webkit-user-drag:none}
-.screen picture{transition:opacity .28s ease-out}
-.screen picture.in{opacity:0}
-.ctl{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:16px}
-.step{cursor:pointer;width:44px;height:44px;border-radius:999px;border:1px solid var(--line2);background:none;color:var(--ink);display:inline-flex;align-items:center;justify-content:center;transition:border-color .2s ease-out}
-.step:hover{border-color:var(--muted)}
-.step svg{width:16px;height:16px}
-.cap{font-size:14px;color:var(--faint);min-width:11em;text-align:center}
-.cap b{color:var(--ink);font-weight:600}
-.shots-note{font-size:14px;color:var(--faint);margin-top:10px;text-align:center;max-width:34em}
-.ios-only{display:none}
-html.plat-ios .ios-only{display:inline}
+.gal{animation:galin .18s ease-out}
+.gal[hidden],.platsel[hidden]{display:none}
+@keyframes galin{from{opacity:.25}to{opacity:1}}
+.gal-h{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 24px;padding-top:20px;border-top:1px solid var(--ink);margin-bottom:clamp(20px,3vw,32px)}
+.gal-h h3{font-size:22px}
+.gal-h p{font-size:14px;color:var(--faint)}
+.shots{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(24px,4vw,32px) clamp(16px,2.6vw,32px);list-style:none;margin:0;padding:0}
+@media (min-width:600px){.shots{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (min-width:1100px){.shots{grid-template-columns:repeat(var(--cols,5),minmax(0,1fr))}}
+.shots figure{margin:0}
+.ph{padding:clamp(4px,.5vw,6px);border:1px solid var(--line2);border-radius:clamp(20px,2.6vw,32px);background:var(--bg)}
+.ph picture,.ph img{display:block;width:100%;height:auto}
+.ph img{aspect-ratio:560/1213;border-radius:clamp(16px,2.1vw,26px);background:var(--bg2);object-fit:cover;object-position:top}
+.shots figcaption{font-size:14px;color:var(--muted);text-align:center;margin-top:12px}
+.trip figcaption{text-align:left;line-height:1.45}
+.trip figcaption b{display:block;color:var(--ink);font-weight:600;font-size:15px;margin-bottom:2px}
+.trip .n{font:500 12px/1 var(--mono);color:var(--faint);letter-spacing:.06em;margin-right:4px}
+.trip-note{font-size:14px;color:var(--faint);margin-top:clamp(20px,3vw,28px)}
+.film-h{font-size:22px;margin:clamp(48px,7vw,80px) 0 clamp(16px,2vw,24px)}
 .platsel{display:flex;gap:4px;padding:4px;margin:clamp(40px,6vw,64px) auto 0;width:max-content;border:1px solid var(--line2);border-radius:999px}
 .platsel button{cursor:pointer;min-height:44px;min-width:120px;padding:0 22px;border:0;border-radius:999px;background:none;color:var(--muted);font:600 15px/1 var(--sans);transition:color .2s ease-out}
 .platsel button:hover{color:var(--ink)}
@@ -124,15 +119,12 @@ html.plat-ios .ios-only{display:inline}
 .qr-box b{display:block;color:var(--ink);font-weight:600}
 @media (max-width:819px){.panel{grid-template-columns:1fr}.qr-box{display:none}}
 @media (hover:none) and (pointer:coarse){.qr-box{display:none}}
-@media (prefers-reduced-motion:reduce){.screen picture,.pages button,.platsel button,.step{transition:none}}
+@media (prefers-reduced-motion:reduce){.gal{animation:none}.platsel button{transition:none}}
 .faq{max-width:760px;border-top:1px solid var(--ink)}
-.faq details{border-bottom:1px solid var(--line)}
-.faq summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:20px;padding:20px 0;font-weight:600;font-size:17px}
-.faq summary::-webkit-details-marker{display:none}
-.faq summary::after{content:"";flex:none;width:11px;height:11px;border-right:2px solid var(--faint);border-bottom:2px solid var(--faint);transform:translateY(-3px) rotate(45deg);transition:transform .2s}
-.faq details[open] summary::after{transform:translateY(2px) rotate(225deg)}
-.faq .a{color:var(--muted);padding:0 36px 22px 0}
-@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}.btn,.faq summary::after,header{transition:none}}
+.qa{padding:22px 0;border-bottom:1px solid var(--line)}
+.qa h3{font-size:17px;letter-spacing:-.01em;line-height:1.35}
+.qa .a{color:var(--muted);margin-top:8px}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}.btn{transition:none}}
 footer{border-top:1px solid var(--line);padding:40px 0 48px;font-size:14px;color:var(--faint)}
 .foot{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:24px 40px;align-items:start}
 .foot .logo svg{height:20px;transform:translateY(2px)}
@@ -144,7 +136,6 @@ footer{border-top:1px solid var(--line);padding:40px 0 48px;font-size:14px;color
 @media (prefers-color-scheme:dark){.film{outline:1px solid var(--line)}}
 @media (max-width:599px){#demo .film{aspect-ratio:720/1160;max-width:420px;margin:0 auto}}
 @media (max-width:599px){.hero .film{aspect-ratio:4/5}}
-.faq summary{min-height:44px}
 nav.top a,.foot nav a{min-width:44px;justify-content:center}
 @media (min-width:900px){.hero{padding-top:clamp(24px,3vw,40px)}.hero h1{max-width:none;font-size:clamp(42px,5vw,64px)}.lede{margin-top:16px}.cta{margin-top:24px}.hero .film{margin-top:28px}}
 html{scroll-padding-top:72px}
@@ -189,7 +180,16 @@ html{scroll-padding-top:72px}
 
 <section class="sec" id="demo" aria-labelledby="demo-h">
 <div class="wrap">
-<div class="head"><p class="label">Demo</p><h2 id="demo-h">See it work.</h2><p>One trip on the live Bag It service, seen on the shopper’s phone. Three items go in, the phone leaves the store, and the receipt arrives a fraction of a second after the phone leaves the store.</p></div>
+<div class="head"><p class="label">Demo</p><h2 id="demo-h">See it work.</h2><p>One trip on the live Bag It service, seen on the shopper’s phone, step by step. The receipt arrives a fraction of a second after the phone leaves the store.</p></div>
+<ol class="shots trip" style="--cols:5" aria-label="One trip, step by step">
+<li><figure><div class="ph"><img src="media/steps/trip-walk-in.webp" width="420" height="903" decoding="async" loading="lazy" alt="The app shows You’re at Bayside Grocer, an empty bag and a total of $0.00."></div><figcaption><b><span class="n">01</span> Walk in</b>The app sees which store you’re in.</figcaption></figure></li>
+<li><figure><div class="ph"><img src="media/steps/trip-drop-it-in.webp" width="420" height="903" decoding="async" loading="lazy" alt="Organic bananas, $1.29, appear in the bag. Total $1.29."></div><figcaption><b><span class="n">02</span> Drop it in</b>Each item shows up as it goes in.</figcaption></figure></li>
+<li><figure><div class="ph"><img src="media/steps/trip-price.webp" width="420" height="903" decoding="async" loading="lazy" alt="Three items: organic bananas $1.29, Honeycrisp apples $3.99, sourdough loaf $6.49. Total $11.77."></div><figcaption><b><span class="n">03</span> It knows the price</b>Your total keeps up as you shop.</figcaption></figure></li>
+<li><figure><div class="ph"><img src="media/steps/trip-walk-out.webp" width="420" height="903" decoding="async" loading="lazy" alt="Leaving Bayside Grocer: charging $11.77 to a demo card."></div><figcaption><b><span class="n">04</span> Walk out</b>No checkout, no Pay button.</figcaption></figure></li>
+<li><figure><div class="ph"><img src="media/steps/trip-receipt.webp" width="420" height="903" decoding="async" loading="lazy" alt="Paid as you left Bayside Grocer: $11.77, three items, exit pass FXEH7X, demo payment."></div><figcaption><b><span class="n">05</span> Receipt arrives</b>Paid the moment you leave.</figcaption></figure></li>
+</ol>
+<p class="trip-note">Screens from the recording below.</p>
+<h3 class="film-h">The whole trip, recorded</h3>
 <figure class="demo-film">
 <div class="film"><video id="v-demo" muted loop playsinline controls preload="none" data-poster="media/bagit-live-trip-poster.jpg" data-poster-narrow="media/bagit-live-trip-portrait-poster.jpg" aria-label="Recording of a real trip in the Bag It app: the phone shows You’re at Bayside Grocer, then organic bananas $1.29, Honeycrisp apples $3.99 and a sourdough loaf $6.49 appear one by one, then Leaving Bayside Grocer, then Paid as you left Bayside Grocer, $11.77, with a demo card." aria-describedby="cap-demo"><source media="(max-width:599px)" src="media/bagit-live-trip-portrait.webm" type="video/webm"><source media="(max-width:599px)" src="media/bagit-live-trip-portrait.mp4" type="video/mp4"><source src="media/bagit-live-trip.webm" type="video/webm"><source src="media/bagit-live-trip.mp4" type="video/mp4"></video><button class="vctl" type="button" data-for="v-demo" data-name="demo" aria-label="Pause demo" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 3h2.5v10H4.5zM9 3h2.5v10H9z" fill="currentColor"/></svg></button></div>
 <figcaption id="cap-demo">Recorded live on the Bag It service. For this recording the store visit and items were simulated, and the phone screen is a web copy of the app’s screens. Demo payment, no card charged.</figcaption>
@@ -200,19 +200,25 @@ html{scroll-padding-top:72px}
 <section class="sec" id="get" aria-labelledby="get-h">
 <div class="wrap">
 <div class="head"><p class="label">Get the app</p><h2 id="get-h">For iPhone and Android.</h2><p>Bags aren’t on sale yet. During early access, the app works with a Bag It bag in a few demo stores. Get it on Android now; the iPhone app is on its way.</p></div>
-<div class="tour" role="group" aria-roledescription="app preview" aria-label="App screens">
-<div class="pages" role="tablist" aria-label="App screen" hidden></div>
-<figure class="phone" id="phone" role="tabpanel" aria-label="App screen">
-<div class="screen" id="screen">
-<!-- FIRST SCREEN -->
-<picture><source srcset="media/screens/android-shopping-dark.webp" media="(prefers-color-scheme: dark)"><img src="media/screens/android-shopping.webp" width="560" height="1213" fetchpriority="low" decoding="async" alt="Bag It on Android. Shopping at Bayside Grocer: each item appears with its price as it goes in the bag, one item isn’t sold there and won’t be charged, and the total says Just walk out."></picture>
-<!-- /FIRST SCREEN -->
-</div>
-</figure>
-<div class="ctl"><button class="step" type="button" id="prev" aria-label="Previous screen" hidden><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg></button><p class="cap" id="cap" aria-live="polite"><b>Shopping</b> · Android</p><button class="step" type="button" id="next" aria-label="Next screen" hidden><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 3 5 5-5 5"/></svg></button></div>
-<p class="shots-note">Screens show demo data.<span class="ios-only"> The iPhone screens are previews of the app in development.</span></p>
-</div>
-<div class="platsel" role="tablist" aria-label="Your phone" hidden><button type="button" role="tab" id="tab-android" aria-controls="get-android" aria-selected="true">Android</button><button type="button" role="tab" id="tab-iphone" aria-controls="get-iphone" aria-selected="false" tabindex="-1">iPhone</button></div>
+<!-- GALLERY (generated by tools/make-screens.py; edit PAGES there) -->
+<div class="gal" id="gal-android"><div class="gal-h"><h3>Android app</h3><p>Screens show demo data.</p></div>
+<ul class="shots" style="--cols:5" aria-label="Android app screens">
+<li><figure><div class="ph"><picture><source srcset="media/screens/android-welcome-dark.webp" media="(prefers-color-scheme: dark)"><img src="media/screens/android-welcome.webp" width="560" height="1213" decoding="async" alt="Bag It on Android. Welcome screen: The bag that checks you out. It lists what the app needs (Bluetooth, location, notifications) and a Get started button."></picture></div><figcaption>Welcome</figcaption></figure></li>
+<li><figure><div class="ph"><picture><source srcset="media/screens/android-in-store-dark.webp" media="(prefers-color-scheme: dark)"><img src="media/screens/android-in-store.webp" width="560" height="1213" decoding="async" alt="Bag It on Android. In the store: You’re at Bayside Grocer, bag connected, the bag is empty: Drop something in."></picture></div><figcaption>In store</figcaption></figure></li>
+<li><figure><div class="ph"><picture><source srcset="media/screens/android-shopping-dark.webp" media="(prefers-color-scheme: dark)"><img src="media/screens/android-shopping.webp" width="560" height="1213" decoding="async" alt="Bag It on Android. Shopping at Bayside Grocer: each item appears with its price as it goes in the bag, one item isn’t sold there and won’t be charged, and the total says Just walk out."></picture></div><figcaption>Shopping</figcaption></figure></li>
+<li><figure><div class="ph"><picture><source srcset="media/screens/android-leaving-dark.webp" media="(prefers-color-scheme: dark)"><img src="media/screens/android-leaving.webp" width="560" height="1213" decoding="async" alt="Bag It on Android. Leaving Bayside Grocer: the bag is charged as you leave; step back inside to keep shopping."></picture></div><figcaption>Leaving</figcaption></figure></li>
+<li><figure><div class="ph"><picture><source srcset="media/screens/android-receipt-dark.webp" media="(prefers-color-scheme: dark)"><img src="media/screens/android-receipt.webp" width="560" height="1213" decoding="async" alt="Bag It on Android. Receipt: Paid as you left Bayside Grocer with a demo card, an exit code to show staff if asked, and Done."></picture></div><figcaption>Receipt</figcaption></figure></li>
+</ul></div>
+<div class="gal" id="gal-ios" hidden><div class="gal-h"><h3>iPhone app</h3><p>The iPhone screens are previews of the app in development, with demo data.</p></div>
+<ul class="shots" style="--cols:5" aria-label="iPhone app screens">
+<li><figure><div class="ph"><picture><img src="media/screens/ios-welcome.webp" width="560" height="1213" decoding="async" loading="lazy" alt="Bag It on iPhone. Welcome screen: The bag that checks you out. It lists what the app needs (Bluetooth, location, notifications) and a Get started button."></picture></div><figcaption>Welcome</figcaption></figure></li>
+<li><figure><div class="ph"><picture><img src="media/screens/ios-in-store.webp" width="560" height="1213" decoding="async" loading="lazy" alt="Bag It on iPhone. In the store: You’re at Bayside Grocer, bag connected, the bag is empty: Drop something in."></picture></div><figcaption>In store</figcaption></figure></li>
+<li><figure><div class="ph"><picture><img src="media/screens/ios-shopping.webp" width="560" height="1213" decoding="async" loading="lazy" alt="Bag It on iPhone. Shopping at Bayside Grocer: each item appears with its price as it goes in the bag, one item isn’t sold there and won’t be charged, and the total says Just walk out."></picture></div><figcaption>Shopping</figcaption></figure></li>
+<li><figure><div class="ph"><picture><img src="media/screens/ios-leaving.webp" width="560" height="1213" decoding="async" loading="lazy" alt="Bag It on iPhone. Leaving Bayside Grocer: the bag is charged as you leave; step back inside to keep shopping."></picture></div><figcaption>Leaving</figcaption></figure></li>
+<li><figure><div class="ph"><picture><img src="media/screens/ios-receipt.webp" width="560" height="1213" decoding="async" loading="lazy" alt="Bag It on iPhone. Receipt: Paid as you left Bayside Grocer with a demo card, an exit code to show staff if asked, and Done."></picture></div><figcaption>Receipt</figcaption></figure></li>
+</ul></div>
+<!-- /GALLERY -->
+<div class="platsel" role="tablist" aria-label="Your phone" hidden><button type="button" role="tab" id="tab-android" aria-controls="gal-android get-android" aria-selected="true">Android</button><button type="button" role="tab" id="tab-iphone" aria-controls="gal-ios get-iphone" aria-selected="false" tabindex="-1">iPhone</button></div>
 <div class="panels">
 <div class="panel" id="get-android" role="tabpanel" aria-labelledby="tab-android">
 <div>
@@ -240,12 +246,12 @@ html{scroll-padding-top:72px}
 <div class="wrap">
 <div class="head"><p class="label">FAQ</p><h2 id="faq-h">Questions.</h2></div>
 <div class="faq">
-<details><summary>Will I be charged?</summary><div class="a"><p>No. During early access, payments are simulated and no card is ever entered or charged. Receipts show a demo card.</p></div></details>
-<details><summary>Which phones does it work with?</summary><div class="a"><p>iPhone and Android. The Android app is available now for Android 8.0 or newer. The iPhone app, for iOS 16 or newer, is coming soon to the App Store.</p></div></details>
-<details><summary>Where can I use Bag It?</summary><div class="a"><p>In stores that are set up for it. During early access that’s a small number of demo stores, and bags aren’t on sale yet. Anywhere else, the app won’t price or charge your bag.</p></div></details>
-<details><summary>What if I put in something the store doesn’t sell?</summary><div class="a"><p>The app shows it as not sold here, and you aren’t charged for it.</p></div></details>
-<details><summary>Why does the app need my location?</summary><div class="a"><p>To know which store you’re in and when you’ve left, so it can price your bag and send your receipt. There’s no account: the app uses an anonymous identity. During early access, your phone’s latest location and your trips are stored as test data that anyone can read.</p></div></details>
-<details><summary>The app can’t find my bag.</summary><div class="a"><p>Make sure your bag is powered and nearby, turn on Bluetooth and allow Bag It to use it (on Android it’s called Nearby devices), then tap Connect bag.</p></div></details>
+<div class="qa"><h3>Will I be charged?</h3><div class="a"><p>No. During early access, payments are simulated and no card is ever entered or charged. Receipts show a demo card.</p></div></div>
+<div class="qa"><h3>Which phones does it work with?</h3><div class="a"><p>iPhone and Android. The Android app is available now for Android 8.0 or newer. The iPhone app, for iOS 16 or newer, is coming soon to the App Store.</p></div></div>
+<div class="qa"><h3>Where can I use Bag It?</h3><div class="a"><p>In stores that are set up for it. During early access that’s a small number of demo stores, and bags aren’t on sale yet. Anywhere else, the app won’t price or charge your bag.</p></div></div>
+<div class="qa"><h3>What if I put in something the store doesn’t sell?</h3><div class="a"><p>The app shows it as not sold here, and you aren’t charged for it.</p></div></div>
+<div class="qa"><h3>Why does the app need my location?</h3><div class="a"><p>To know which store you’re in and when you’ve left, so it can price your bag and send your receipt. There’s no account: the app uses an anonymous identity. During early access, your phone’s latest location and your trips are stored as test data that anyone can read.</p></div></div>
+<div class="qa"><h3>The app can’t find my bag.</h3><div class="a"><p>Make sure your bag is powered and nearby, turn on Bluetooth and allow Bag It to use it (on Android it’s called Nearby devices), then tap Connect bag.</p></div></div>
 </div>
 </div>
 </section>
@@ -260,7 +266,6 @@ html{scroll-padding-top:72px}
 </footer>
 <script>
 (function(){
-var h=document.querySelector('header');function f(){h.classList.toggle('scrolled',window.scrollY>4)}f();window.addEventListener('scroll',f,{passive:true});
 var ua=navigator.userAgent,g=document.getElementById('hero-get');
 if(/Android/i.test(ua)){g.href='downloads/bag-it.apk';g.setAttribute('download','');g.textContent='Download for Android';var hb=document.querySelector('header .btn');hb.href=g.href;hb.setAttribute('download','');hb.textContent='Download';}else if(/iPhone|iPad|iPod/i.test(ua)){g.textContent='Coming soon to iPhone';g.className='btn btn-2';g.href='#get-iphone';}
 var reduce=(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches)||!!(navigator.connection&&navigator.connection.saveData);
@@ -279,49 +284,22 @@ document.querySelectorAll('.vctl').forEach(function(b){
 });
 })();
 
-/* PAGES (generated by tools/make-screens.py; edit there) */
-var PAGES=[{"id": "welcome","label": "Welcome","alt": "Welcome screen: The bag that checks you out. It lists what the app needs (Bluetooth, location, notifications) and a Get started button.","android": "media/screens/android-welcome.webp","androidDark": "media/screens/android-welcome-dark.webp","ios": "media/screens/ios-welcome.webp","iosDark": null},{"id": "in-store","label": "In store","alt": "In the store: You’re at Bayside Grocer, bag connected, the bag is empty: Drop something in.","android": "media/screens/android-in-store.webp","androidDark": "media/screens/android-in-store-dark.webp","ios": "media/screens/ios-in-store.webp","iosDark": null},{"id": "shopping","label": "Shopping","alt": "Shopping at Bayside Grocer: each item appears with its price as it goes in the bag, one item isn’t sold there and won’t be charged, and the total says Just walk out.","android": "media/screens/android-shopping.webp","androidDark": "media/screens/android-shopping-dark.webp","ios": "media/screens/ios-shopping.webp","iosDark": null},{"id": "leaving","label": "Leaving","alt": "Leaving Bayside Grocer: the bag is charged as you leave; step back inside to keep shopping.","android": "media/screens/android-leaving.webp","androidDark": "media/screens/android-leaving-dark.webp","ios": "media/screens/ios-leaving.webp","iosDark": null},{"id": "receipt","label": "Receipt","alt": "Receipt: Paid as you left Bayside Grocer with a demo card, an exit code to show staff if asked, and Done.","android": "media/screens/android-receipt.webp","androidDark": "media/screens/android-receipt-dark.webp","ios": "media/screens/ios-receipt.webp","iosDark": null}],START="shopping";
-/* /PAGES */
 (function(){
 var root=document.documentElement,ios=/iPhone|iPad|iPod/i.test(navigator.userAgent);
 var reduce=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
-var NAME={android:'Android',ios:'iPhone'};
-var tabs=document.querySelector('.pages'),scr=document.getElementById('screen'),cap=document.getElementById('cap');
-var prev=document.getElementById('prev'),next=document.getElementById('next'),phone=document.getElementById('phone');
-var sel=document.querySelector('.platsel'),ptabs=[document.getElementById('tab-android'),document.getElementById('tab-iphone')];
-var panels={android:document.getElementById('get-android'),ios:document.getElementById('get-iphone')};
-if(!PAGES.length||!tabs)return;
-var cur=Math.max(0,PAGES.findIndex(function(p){return p.id===START})),plat='android',btns=[],ready=false;
-function pic(pg,pl){var pc=document.createElement('picture');var d=pg[pl+'Dark'];if(d){var so=document.createElement('source');so.srcset=d;so.media='(prefers-color-scheme: dark)';pc.appendChild(so);}
-  var im=document.createElement('img');im.src=pg[pl];im.width=560;im.height=1213;im.decoding='async';im.alt='Bag It on '+NAME[pl]+'. '+pg.alt;im.draggable=false;pc.appendChild(im);return pc;}
-function warm(i){var pg=PAGES[(i+PAGES.length)%PAGES.length];var dk=window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches;var u=(dk&&pg[plat+'Dark'])||pg[plat];var im=new Image();im.decoding='async';im.src=u;}
-function render(){
-  var pg=PAGES[cur],old=scr.querySelectorAll('picture'),pc=pic(pg,plat),im=pc.querySelector('img');
-  if(!reduce&&old.length&&ready){pc.className='in';var shown=false,show=function(){if(shown)return;shown=true;requestAnimationFrame(function(){pc.className='';});setTimeout(function(){old.forEach(function(o){if(o.parentNode)o.remove();});},320);};im.addEventListener('load',show);im.addEventListener('error',show);setTimeout(show,600);}
-  else old.forEach(function(o){o.remove();});
-  scr.appendChild(pc);
-  btns.forEach(function(b,i){var on=i===cur;b.setAttribute('aria-selected',on);b.tabIndex=on?0:-1;});
-  phone.setAttribute('aria-labelledby','pt-'+pg.id);
-  cap.innerHTML='<b></b> · '+NAME[plat]+' · '+(cur+1)+' of '+PAGES.length;cap.querySelector('b').textContent=pg.label;
-  warm(cur+1);warm(cur-1);
-}
-function go(i,focus){cur=(i+PAGES.length)%PAGES.length;render();if(focus)btns[cur].focus();}
-PAGES.forEach(function(pg,i){var b=document.createElement('button');b.type='button';b.role='tab';b.setAttribute('role','tab');b.id='pt-'+pg.id;b.setAttribute('aria-controls','phone');b.textContent=pg.label;b.addEventListener('click',function(){go(i);});tabs.appendChild(b);btns.push(b);});
-tabs.addEventListener('keydown',function(e){var k=e.key,n=null;if(k==='ArrowRight')n=cur+1;else if(k==='ArrowLeft')n=cur-1;else if(k==='Home')n=0;else if(k==='End')n=PAGES.length-1;if(n===null)return;e.preventDefault();go(n,true);});
-prev.addEventListener('click',function(){go(cur-1);});next.addEventListener('click',function(){go(cur+1);});
-var sx=null,sy=0;scr.addEventListener('pointerdown',function(e){sx=e.clientX;sy=e.clientY;});
-scr.addEventListener('pointerup',function(e){if(sx===null)return;var dx=e.clientX-sx,dy=e.clientY-sy;sx=null;if(Math.abs(dx)>40&&Math.abs(dx)>Math.abs(dy)*1.2)go(cur+(dx<0?1:-1));});
-scr.addEventListener('pointercancel',function(){sx=null;});
-function setPlat(p,focus){plat=p;root.classList.toggle('plat-ios',p==='ios');
+var sel=document.querySelector('.platsel');if(!sel)return;
+var ptabs=[document.getElementById('tab-android'),document.getElementById('tab-iphone')];
+var show={android:[document.getElementById('gal-android'),document.getElementById('get-android')],ios:[document.getElementById('gal-ios'),document.getElementById('get-iphone')]};
+function setPlat(p,focus){root.classList.toggle('plat-ios',p==='ios');
   ptabs.forEach(function(t,i){var on=(i===1)===(p==='ios');t.setAttribute('aria-selected',on);t.tabIndex=on?0:-1;if(on&&focus)t.focus();});
-  panels.android.hidden=p!=='android';panels.ios.hidden=p!=='ios';render();}
+  ['android','ios'].forEach(function(k){show[k].forEach(function(el){if(el)el.hidden=k!==p;});});}
 ptabs[0].addEventListener('click',function(){setPlat('android');});ptabs[1].addEventListener('click',function(){setPlat('ios');});
-sel.addEventListener('keydown',function(e){var k=e.key;if(k==='ArrowRight'||k==='ArrowLeft'||k==='Home'||k==='End'){e.preventDefault();var p=(k==='Home')?'android':(k==='End')?'ios':(plat==='ios'?'android':'ios');setPlat(p,true);}});
-function toIos(){setPlat('ios');document.getElementById('get').scrollIntoView({behavior:reduce?'auto':'smooth',block:'start'});}
-document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[href="#get-iphone"]');if(!a)return;e.preventDefault();if(history.replaceState)history.replaceState(null,'','#get-iphone');toIos();});
-tabs.hidden=false;sel.hidden=false;prev.hidden=false;next.hidden=false;
-setPlat(location.hash==='#get-iphone'||ios?'ios':'android');ready=true;
-if(location.hash==='#get-iphone'){var land=function(){document.getElementById('get').scrollIntoView({block:'start'});};setTimeout(land,0);window.addEventListener('load',function(){setTimeout(land,0);});}
+sel.addEventListener('keydown',function(e){var k=e.key;if(k==='ArrowRight'||k==='ArrowLeft'||k==='Home'||k==='End'){e.preventDefault();var cur=ptabs[1].getAttribute('aria-selected')==='true'?'ios':'android';setPlat(k==='Home'?'android':k==='End'?'ios':(cur==='ios'?'android':'ios'),true);}});
+function land(){document.getElementById('get').scrollIntoView({behavior:reduce?'auto':'smooth',block:'start'});}
+document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[href="#get-iphone"]');if(!a)return;e.preventDefault();if(history.replaceState)history.replaceState(null,'','#get-iphone');setPlat('ios');land();});
+sel.hidden=false;
+setPlat(location.hash==='#get-iphone'||ios?'ios':'android');
+if(location.hash==='#get-iphone'){var jump=function(){document.getElementById('get').scrollIntoView({block:'start'});};setTimeout(jump,0);window.addEventListener('load',function(){setTimeout(jump,0);});}
 })();
 </script>
 </body>

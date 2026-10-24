@@ -5,7 +5,8 @@ Static site for Bag It. No build step, no cookies, no analytics, no third-party 
 ```
 index.html          the page (inline CSS + SVG, small script: video play/pause, Android download button)
 media/screens/      phone screens for the Get the app preview, iPhone and Android (see Screenshots below)
-tools/              make-screens.py: the page list; rebuilds media/screens and the PAGES array (not deployed)
+media/steps/        demo step stills cut from the recorded trip
+tools/              make-screens.py (screen gallery page list) and make-demo-steps.py (not deployed)
 brand/              logo, mark, favicon, touch icon, OG image, brand.md
 media/              product film + app demo recordings (see media/README.md)
 downloads/          bag-it.apk (Android app; stable name, replace the file to update)
@@ -26,15 +27,20 @@ Content rules: only true statements. Payments are simulated during early access;
 ## Deploy bundle
 Publish only the files in the ZIP built from this folder: index.html, 404.html, _headers, _redirects, brand/{favicon.svg,favicon-32.png,apple-touch-icon.png,og-image.jpg,logo.svg,mark.svg}, media/* (including media/screens/*.webp), downloads/*.apk. `_redirects` hides the internal docs if the whole folder is deployed.
 
-## Screenshots (swap point)
-"Get the app" is one phone preview plus a platform selector. Page tabs above the phone (and the arrows, swipe, arrow keys) browse the app's screens; the Android | iPhone selector below picks the platform, which drives both the phone (same page, other platform) and the panel under it (Android: download + QR; iPhone: not available yet). Default platform: iPhone for iOS user agents and for links to `#get-iphone`, otherwise Android. Without JavaScript the page shows the first screen (Android) and both panels.
+## Page structure
+Everything is visible while scrolling top to bottom; nothing is paged, scroll-linked or collapsed: hero (product film) → How it works (3 beats) → Demo (5 trip steps side by side, then the recorded video) → Get the app (screen gallery + Android | iPhone selector + panel) → FAQ (questions and answers all open) → footer. The header is sticky with a solid background and hairline; anchored jumps land below it via `scroll-padding-top` on `html` (the only scroll offset).
 
-- **One page list:** `PAGES` at the top of `tools/make-screens.py` (id, tab label, platform-neutral alt text, Android render, iPhone render, optional dark render per platform) plus `START` (first page shown). Run `python3 tools/make-screens.py`. It writes `media/screens/<android|ios>-<id>[-dark].webp` (560 px wide, about 20 KB), regenerates the `PAGES` data array in index.html (between `/* PAGES (generated` and `/* /PAGES */`) and the no-JavaScript first screen (between `<!-- FIRST SCREEN -->` markers), and deletes stale files. Order of the list = order of the tabs.
-- **Adding pages** (Sign up, Shop, Trips, Wallet, Account, Pair your bag when Android 3.2 / iPhone 1.2 land): append entries with a render for BOTH platforms. A page that exists on only one platform can't be in the tour.
-- **Dark mode:** Android has a full dark set, so its screens follow the visitor's theme. iPhone dark renders exist for only two pages, so the iPhone tour stays light in both themes rather than switching mid-tour; add `ios` dark renders when a full set exists.
-- Android renders have a placeholder status-bar clock in the top-left corner; the tool blanks that strip (`BLANK_TOP`) because the phone frame's rounded corner would cut it.
-- Current sources: iPhone 1.1 reference renders (`/cloudspace/smartbag/ios-ui/final/`, HTML mirror, so the page says "The iPhone screens are previews of the app in development." whenever iPhone is selected; remove that once screens come from a real build) and Android 3.1 renders (`/cloudspace/smartbag/android-ui/final/411-light|411-dark`).
-- If the screens change size, keep `WIDTH`/`HEIGHT` in the tool and the `aspect-ratio` of `.screen` in index.html in step.
+## Demo steps
+The step row in #demo shows five stills cut from the recorded trip (`media/steps/trip-*.webp`, phone screen only, 420 px wide, lazy-loaded). `tools/make-demo-steps.py` lists the frame times and the crop; labels and one-line descriptions are in index.html. If the recording changes, re-time `STEPS` and rerun.
+
+## Screenshots (swap point)
+"Get the app" shows every app screen at once in a gallery (one row of up to 6 on wide screens, rows of 3 on tablets, 2 columns on phones; more pages wrap into balanced rows), with the Android | iPhone selector below it. The selector swaps which platform's gallery is shown (heading "Android app" / "iPhone app") and the panel under it (Android: download + QR; iPhone: not available yet). Default platform: iPhone for iOS user agents and links to `#get-iphone`, otherwise Android. Without JavaScript: the Android gallery and both panels.
+
+- **One page list:** `PAGES` at the top of `tools/make-screens.py` (id, caption label, platform-neutral alt text, Android render, iPhone render, optional dark render per platform). Run `python3 tools/make-screens.py`. It writes `media/screens/<android|ios>-<id>[-dark].webp` (560 px wide, about 20 KB), regenerates both galleries in index.html (between the `<!-- GALLERY -->` markers; first row of the Android gallery eager, everything else lazy, width/height set) and deletes stale files. Order of the list = order on the page.
+- **Adding pages** (Sign up, Shop, Trips, Wallet, Account, Pair your bag when Android 3.2 / iPhone 1.2 land): append entries with a render for BOTH platforms. A page that exists on only one platform can't be in the gallery.
+- **Dark mode:** Android has a full dark set, so its screens follow the visitor's theme. iPhone dark renders exist for only two pages, so the iPhone gallery stays light in both themes rather than mixing; add `ios` dark renders when a full set exists.
+- Android renders have a placeholder status-bar clock in the top-left corner; the tool blanks that strip (`BLANK_TOP`) because the frame's rounded corner would cut it.
+- Current sources: iPhone 1.1 reference renders (`/cloudspace/smartbag/ios-ui/final/`, HTML mirror; the iPhone gallery heading says they're previews of the app in development; change that once screens come from a real build) and Android 3.1 renders (`/cloudspace/smartbag/android-ui/final/411-light|411-dark`).
 
 ## iPhone availability
 There is no App Store or TestFlight build: the iPhone panel says "The iPhone app isn’t available to download yet. It’s coming to the App Store." with no badge or link. When the app is live, replace the `<p class="plain">` in the `#get-iphone` panel with the App Store link, and update the hero fine print, the meta description, the FAQ "Which phones does it work with?" and the iPhone script branch at the bottom of index.html.
