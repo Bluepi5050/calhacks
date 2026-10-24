@@ -56,7 +56,7 @@ struct PermissionSteps: View {
     let onDone: () -> Void
     @EnvironmentObject var m: ShopModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var page = 0                  // 0 Bluetooth, 1 Location, 2 Notifications
+    @State private var page = 0                  // 0 Bluetooth, 1 Location, 2 All the time, 3 Notifications
     @State private var advancing = false         // a double tap must not skip a screen
 
     var body: some View {
@@ -90,7 +90,12 @@ struct PermissionSteps: View {
             Prime(art: AnyView(Symbol(name: "location")),
                   title: "Find your store",
                   why: "Your location tells us which store you're in, and when you leave so we can charge your bag.",
-                  tip: "Choose Allow While Using App with Precise Location on. Later, choose Change to Always Allow.")
+                  tip: "Choose Allow While Using App with Precise Location on.")
+        case 2:
+            Prime(art: AnyView(Symbol(name: "location")),
+                  title: "Pay with the app closed",
+                  why: "Allow Bag It to use your location all the time so leaving a store pays even when the app is closed.",
+                  tip: "Choose Change to Always Allow. If you force-quit Bag It, iOS may not wake it, so leave it running in the background. You can change this later in Account › Notifications.")
         default:
             Prime(art: AnyView(Symbol(name: "bell")),
                   title: "Get your receipt",
@@ -105,6 +110,13 @@ struct PermissionSteps: View {
                 Button("Allow Bluetooth") { m.link.requestAccess(); next(after: 0.4) }.buttonStyle(PillStyle())
             case 1:
                 Button("Allow Location") { m.location.start(); next(after: 0.4) }.buttonStyle(PillStyle())
+            case 2:
+                Button("Allow all the time") {
+                    // iOS shows this prompt only after While Using; otherwise just move on.
+                    next(after: m.location.requestAlways() ? 0.4 : 0)
+                }
+                .buttonStyle(PillStyle())
+                Button("Not now") { next() }.buttonStyle(PillStyle(primary: false))
             default:
                 Button("Allow Notifications") {
                     advancing = true

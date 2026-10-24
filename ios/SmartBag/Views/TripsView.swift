@@ -5,6 +5,7 @@ import SwiftUI
 
 struct TripsView: View {
     @EnvironmentObject var account: AccountModel
+    @ObservedObject private var router = AppRouter.shared
     @State private var open: Receipt?
 
     var body: some View {
@@ -43,10 +44,21 @@ struct TripsView: View {
         }
         .refreshable { await account.loadTrips() }
         .background(Theme.bg.ignoresSafeArea())
-        .task { await account.loadTrips() }
+        .task { await account.loadTrips(); openPending() }
+        .onChange(of: router.pendingCode) { _ in Task { await account.loadTrips(); openPending() } }
+        .onChange(of: account.trips) { _ in openPending() }
         .sheet(item: $open) { r in
             ReceiptScreen(receipt: r, live: false) { open = nil }.presentationDragIndicator(.visible)
         }
+    }
+
+    /// A tapped notification's receipt, found by its exit code (it may be another phone's trip).
+    private func openPending() {
+        guard let code = router.pendingCode, account.trips != nil || account.tripsError != nil else { return }
+        if let r = account.trips?.first(where: { $0.code == code }) ?? (ShopModel.shared.lastReceipt?.code == code ? ShopModel.shared.lastReceipt : nil) {
+            open = r
+        }
+        router.pendingCode = nil
     }
 
     private func row(_ r: Receipt) -> some View {

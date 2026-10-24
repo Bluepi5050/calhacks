@@ -14,7 +14,7 @@ name = b"shop_locate"
 print((bytes([4]) + struct.pack("<I", 7) + bytes([0]) + struct.pack("<I", len(name)) + name + struct.pack("<I", len(args)) + args).hex())')
 export EXPECT_FRAME
 swiftc -swift-version 5 -O -parse-as-library \
-  SmartBag/Core/SpacetimeClient.swift SmartBag/Core/BagProtocol.swift SmartBag/Core/Cards.swift Tests/LinuxCLI/main.swift \
+  SmartBag/Core/SpacetimeClient.swift SmartBag/Core/BagProtocol.swift SmartBag/Core/Cards.swift SmartBag/Core/Notifications.swift Tests/LinuxCLI/main.swift \
   -o .build/walkout-cli
 # Linux libcurl must support ws/wss for URLSessionWebSocketTask (Ubuntu 24.04's 8.5 does not);
 # point LD_LIBRARY_PATH at a websocket-enabled build if one exists (see README).
@@ -27,6 +27,6 @@ for f in ShopModel AccountModel; do
   sed -e '/^import CoreLocation/d' -e '/^import UIKit/d' -e '/^import Combine/d' SmartBag/Model/$f.swift > .build/$f.swift
 done
 swiftc -swift-version 5 -parse-as-library \
-  SmartBag/Core/SpacetimeClient.swift SmartBag/Core/BagProtocol.swift SmartBag/Core/Cards.swift .build/ShopModel.swift .build/AccountModel.swift \
+  SmartBag/Core/SpacetimeClient.swift SmartBag/Core/BagProtocol.swift SmartBag/Core/Cards.swift SmartBag/Core/Notifications.swift .build/ShopModel.swift .build/AccountModel.swift \
   Tests/ModelHarness/Stubs.swift Tests/ModelHarness/main.swift -o .build/model-harness
 .build/model-harness

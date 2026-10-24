@@ -66,6 +66,39 @@ func offline() throws {
     try accountCodecs()
     cards()
     pairing()
+    try notifications()
+}
+
+func notifications() throws {
+    print("push + notifications")
+    var p = BsatnWriter(); p.bool(false).bool(true).string("trips,security")
+    check(try PushState.decode(p.data) == PushState(serverPush: false, registered: true, prefs: "trips,security"), "PushState decode")
+    var n = BsatnWriter(); n.u32(1).string("bayside-grocer").string("Bayside Grocer").string("Market St").f64(37.7897).f64(-122.3972).u32(150).u32(12)
+    let near = try NearbyStore.decodeList(n.data)
+    check(near.count == 1 && near[0].id == "bayside-grocer" && near[0].radiusM == 150 && near[0].lat == 37.7897, "NearbyStore[] decode")
+    var str = BsatnWriter(); str.string("push not configured")
+    check(try decodeString(str.data) == "push not configured", "push_test string decode")
+
+    let paid = Receipt(orderId: 41, code: "SRF6WQ", storeName: "Bayside Grocer", totalCents: 1118, itemCount: 2, unpricedCount: 0,
+                       status: "paid", payment: "Visa •••• 4242", paidMicros: 0, lines: [])
+    let t = NotificationCopy.receipt(paid)
+    check(t.title == "Paid $11.18 at Bayside Grocer" && t.body == "2 items with Visa •••• 4242. Exit code SRF6WQ.", "paid copy matches the server push")
+    check(t.id == "trip-41" && t.kind == .trips && t.info["type"] == "trip" && t.info["code"] == "SRF6WQ", "paid: one id per order, tap opens the receipt")
+    let due = Receipt(orderId: 42, code: "K7Q2X9", storeName: "Bayside Grocer", totalCents: 1118, itemCount: 1, unpricedCount: 0,
+                      status: "payment_due", payment: "", paidMicros: 0, lines: [])
+    let d = NotificationCopy.receipt(due)
+    check(d.title == "Payment due at Bayside Grocer" && d.body.contains("$11.18 for 1 item") && d.body.contains("staff") && !d.body.contains("settle")
+          && d.info["type"] == "payment_due", "payment due: no in-app settling promised")
+    check(NotificationCopy.arrival(store: "Bayside Grocer", storeId: "b", payment: "Visa •••• 4242").body == "Drop things in your bag. Leaving pays with Visa •••• 4242."
+          && NotificationCopy.arrival(store: "Bayside Grocer", storeId: "b", payment: "").body == "Add a card before you leave, or you'll pay at the store.", "arrival copy")
+    check(NotificationCopy.bagLost().title == "Your bag disconnected" && NotificationCopy.bagLost().kind == .bag, "bag alert copy")
+    var prefs = NotificationPrefs()
+    check(prefs.server == "trips,security" && prefs.allows(.store), "prefs: all on by default")
+    prefs.security = false; prefs.store = false
+    check(prefs.server == "trips" && !prefs.allows(.store), "prefs: server list = trips/security only")
+    let ud = UserDefaults(suiteName: "smartbag-cli-\(Int(Date().timeIntervalSince1970))")!
+    prefs.save(ud)
+    check(NotificationPrefs.load(ud) == prefs, "prefs persist")
 }
 
 /// Bytes recorded from the live module (Tests/Fixtures, written by `SMARTBAG_CAPTURE=1 tools/verify-linux.sh`).
@@ -268,7 +301,8 @@ func liveAccount() async throws {
     _ = try await api.locate(lat: lat + 270 / 111_320.0, lng: lng, accuracy: 8)
     cart = try await api.locate(lat: lat + 300 / 111_320.0, lng: lng, accuracy: 8)
     guard let r = cart.lastReceipt else { check(false, "walk-out receipt"); return }
-    check(r.isPaid && r.payment == "Demo Visa •••• 4242" && r.totalCents == 1118, "walk-out charged \(money(r.totalCents)) to \(r.payment)")
+    // v5.2: receipts carry 'Brand •••• last4' without the nickname; CartState.payment keeps the full label.
+    check(r.isPaid && r.payment == "Visa •••• 4242" && r.totalCents == 1118, "walk-out charged \(money(r.totalCents)) to \(r.payment)")
     let rawTrips = try await api.call("shop_trips", BsatnWriter().u32(20).data)
     capture("shop_trips", rawTrips)
     let trips = try CartState.decodeReceipts(rawTrips)
@@ -298,6 +332,14 @@ func liveAccount() async throws {
     check(a.cards.count == 1 && a.payment == "Demo Visa •••• 4242", "removing the default promotes the oldest card")
     _ = try await phone2.signOut()
 
+    // v5.2: account changes are refused mid-trip (in a store with items), with plain words, and change nothing.
+    _ = try await api.locate(lat: lat, lng: lng, accuracy: 8)
+    _ = try await api.bagLine("+1005@M1")
+    await expectError("sign out mid-trip", "middle of a trip") { try await api.signOut() }
+    a = try await api.account()
+    check(a.signedIn, "still signed in after the refused sign-out")
+    cart = try await api.remove(sku: "1005")
+    check(cart.lines.isEmpty, "bag emptied")
     a = try await api.signOut()
     check(!a.signedIn && a.cards.isEmpty, "signed out")
     cart = try await api.state()
@@ -305,6 +347,9 @@ func liveAccount() async throws {
     await expectError("wallet after sign-out", "Log in first") { try await api.addCard(brand: "Visa", last4: "1234", expMonth: 1, expYear: 2030, nickname: "", makeDefault: false) }
     a = try await api.signIn(email: email, password: pw)
     check(a.signedIn, "logs back in")
+    check(try await api.trips(limit: 10).contains { $0.orderId == r.orderId }, "the account's trip is still in Trips after sign-out and back (durable ownership)")
+    cart = try await api.state()
+    check(cart.bag.isEmpty, "v5.2 cleared the bag name on the account change (the app re-sends it)")
     await expectError("delete with wrong password", "That password is wrong") { try await api.deleteAccount(password: "nope nope") }
     a = try await api.deleteAccount(password: pw)
     check(!a.signedIn, "account deleted")
@@ -313,11 +358,38 @@ func liveAccount() async throws {
     await phone2.disconnect()
 }
 
+/// Push procedures (module v5.1) and nearby stores, with a fresh account (deleted afterwards).
+func livePush() async throws {
+    print("live push + nearby stores")
+    let api = SpacetimeClient(tokens: MemoryTokenStore())
+    let near = try await api.nearbyStores(lat: 37.7897, lng: -122.3972, limit: 20)
+    check(near.first?.id == "bayside-grocer" && near.count <= 20 && near.first!.radiusM > 0, "nearest store is Bayside Grocer (\(near.count) stores, r \(near.first?.radiusM ?? 0) m)")
+    var s = try await api.pushStatus()
+    check(!s.registered, "signed-out phone is not registered (serverPush \(s.serverPush))")
+    do { _ = try await api.pushRegister(token: String(repeating: "f", count: 64), prefs: "trips"); check(false, "push_register needs a login") }
+    catch { check(userMessage(error).contains("Log in first"), "push_register needs a login -> \"\(userMessage(error))\"") }
+    let stamp = Int(Date().timeIntervalSince1970), email = "test+p\(stamp)@bagitwith.us", pw = "push test \(stamp)"
+    _ = try await api.signUp(name: "Push Test", email: email, password: pw)
+    do { _ = try await api.pushRegister(token: "short", prefs: "trips"); check(false, "short token rejected") }
+    catch { check(userMessage(error).contains("token"), "bad token -> \"\(userMessage(error))\"") }
+    let raw = try await api.call("push_register", BsatnWriter().string("ios").string("test-token-\(stamp)-" + String(repeating: "a", count: 40)).string("trips,security,junk").data)
+    s = try PushState.decode(raw)
+    check(s.registered && s.prefs == "trips,security", "registered; unknown prefs dropped (\(s.prefs))")
+    s = try await api.pushSetPrefs("trips")
+    check(s.prefs == "trips", "prefs updated")
+    let test = try await api.pushTest()
+    check(s.serverPush ? test.hasPrefix("sent") : test == "push not configured", "push_test -> \"\(test)\"")
+    s = try await api.pushUnregister()
+    check(!s.registered, "unregistered")
+    _ = try await api.deleteAccount(password: pw)
+    await api.disconnect()
+}
+
 @main struct WalkOutCLI {
     static func main() async {
         do {
             try offline()
-            if !CommandLine.arguments.contains("--offline") { try await live(); try await liveAccount() }
+            if !CommandLine.arguments.contains("--offline") { try await live(); try await liveAccount(); try await livePush() }
         } catch {
             print("  FAIL threw \(error)"); failures += 1
         }

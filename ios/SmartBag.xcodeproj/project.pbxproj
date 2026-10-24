@@ -15,18 +15,23 @@
 		541139E82154F3B3C76A8A32 /* SmartBagApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4200B773920A6FCCA11C4F26 /* SmartBagApp.swift */; };
 		67DE1E89613532E87FA4E398 /* ShopView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC584B4600E1B9AEA720665D /* ShopView.swift */; };
 		6B3B4969E7A09125BE7E5D9A /* BagProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0B06ADB32F6D43DA346E8A4 /* BagProtocol.swift */; };
+		6CA1EF7E77BBE0F07162A8E1 /* AppRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F64A6F3F914F2E699A27C9F9 /* AppRouter.swift */; };
 		6D8243C7AB1029B7A270FED2 /* AccountView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D34AF5BD14ADFE32BF8D63C9 /* AccountView.swift */; };
 		7E8597649B41FC0A8BE4A8F0 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A72AEBFB414693DF3EEF18A /* RootView.swift */; };
 		858BE1C3E69BB588999A95AD /* TripsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 267270FA1D39FE38F294E09D /* TripsView.swift */; };
+		91B97E299160F66D68C93884 /* StoreRegions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80D0F56461B71F53FE13D2C6 /* StoreRegions.swift */; };
 		9393C67DEFA7C04674E62E97 /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC7FC75E025AEC41AEF33FBD /* PairingView.swift */; };
 		957E2BAE13A0D9F7CFB4F4E9 /* SpacetimeClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F71BD07149EC0BF66C6072EB /* SpacetimeClient.swift */; };
+		A20F4554151DA87583CD726A /* NotificationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA105AEAE39666D071EDB5A6 /* NotificationSettingsView.swift */; };
 		A43A550F62733F8D2D644E92 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F722CBB13356EBF84DBF9667 /* Assets.xcassets */; };
+		B25FDB05335B19BF05D33CAB /* Notifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78D7D65417D04B3B7A4AF2A9 /* Notifications.swift */; };
 		BB9DC2EC65B1B8F5DB11CAF0 /* AuthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E14BDE9ACECAD1BE0D5E86C9 /* AuthView.swift */; };
 		BDF34DCB00040955FAD2D814 /* KeychainTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DD57D8A70A93547AA1097B6 /* KeychainTokenStore.swift */; };
 		C69A84A91574CBB8CC415474 /* AccountModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BB92CE23994C19E09489A10 /* AccountModel.swift */; };
 		D0EE2DC969365CABBC0E8F17 /* Notify.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23C0C411234969543ABE7AFC /* Notify.swift */; };
 		DE5A6BF05D514F3B166080C2 /* PhoneLocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2B8CC85EC0904BBB83E7822 /* PhoneLocation.swift */; };
 		E3291261BA6A3B4DC471DCFE /* Cards.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D32D2EE7E45BB2688AF5852 /* Cards.swift */; };
+		E3DAE804F773F480093AEBBC /* Push.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC0FD7AC298EBE3E62C19E1D /* Push.swift */; };
 		FF827902FAAE836866565786 /* CardViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2B1128C09CDD1FA106FA4A7 /* CardViews.swift */; };
 /* End PBXBuildFile section */
 
@@ -39,11 +44,14 @@
 		3A72AEBFB414693DF3EEF18A /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		4200B773920A6FCCA11C4F26 /* SmartBagApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmartBagApp.swift; sourceTree = "<group>"; };
 		694829EBE3229927DA63D4B2 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		78D7D65417D04B3B7A4AF2A9 /* Notifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Notifications.swift; sourceTree = "<group>"; };
+		80D0F56461B71F53FE13D2C6 /* StoreRegions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreRegions.swift; sourceTree = "<group>"; };
 		8B63F0E7F5E7C4171C46A09F /* BagLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BagLink.swift; sourceTree = "<group>"; };
 		8BB92CE23994C19E09489A10 /* AccountModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountModel.swift; sourceTree = "<group>"; };
 		9A6DCA749FE21ABC0D76903B /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
 		9DD57D8A70A93547AA1097B6 /* KeychainTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainTokenStore.swift; sourceTree = "<group>"; };
 		A2B8CC85EC0904BBB83E7822 /* PhoneLocation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneLocation.swift; sourceTree = "<group>"; };
+		CA105AEAE39666D071EDB5A6 /* NotificationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationSettingsView.swift; sourceTree = "<group>"; };
 		D2B1128C09CDD1FA106FA4A7 /* CardViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardViews.swift; sourceTree = "<group>"; };
 		D34AF5BD14ADFE32BF8D63C9 /* AccountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountView.swift; sourceTree = "<group>"; };
 		D4E74C48226ABE9C3D0C80E4 /* ReceiptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptView.swift; sourceTree = "<group>"; };
@@ -51,8 +59,10 @@
 		E14BDE9ACECAD1BE0D5E86C9 /* AuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthView.swift; sourceTree = "<group>"; };
 		EC584B4600E1B9AEA720665D /* ShopView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShopView.swift; sourceTree = "<group>"; };
 		EC7FC75E025AEC41AEF33FBD /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
+		F64A6F3F914F2E699A27C9F9 /* AppRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRouter.swift; sourceTree = "<group>"; };
 		F71BD07149EC0BF66C6072EB /* SpacetimeClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpacetimeClient.swift; sourceTree = "<group>"; };
 		F722CBB13356EBF84DBF9667 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		FC0FD7AC298EBE3E62C19E1D /* Push.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Push.swift; sourceTree = "<group>"; };
 		FEFD0F30B73FE6897D353DCC /* ShopModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShopModel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -63,6 +73,7 @@
 				D34AF5BD14ADFE32BF8D63C9 /* AccountView.swift */,
 				E14BDE9ACECAD1BE0D5E86C9 /* AuthView.swift */,
 				D2B1128C09CDD1FA106FA4A7 /* CardViews.swift */,
+				CA105AEAE39666D071EDB5A6 /* NotificationSettingsView.swift */,
 				EC7FC75E025AEC41AEF33FBD /* PairingView.swift */,
 				D4E74C48226ABE9C3D0C80E4 /* ReceiptView.swift */,
 				3A72AEBFB414693DF3EEF18A /* RootView.swift */,
@@ -91,11 +102,14 @@
 			isa = PBXGroup;
 			children = (
 				8BB92CE23994C19E09489A10 /* AccountModel.swift */,
+				F64A6F3F914F2E699A27C9F9 /* AppRouter.swift */,
 				8B63F0E7F5E7C4171C46A09F /* BagLink.swift */,
 				9DD57D8A70A93547AA1097B6 /* KeychainTokenStore.swift */,
 				23C0C411234969543ABE7AFC /* Notify.swift */,
 				A2B8CC85EC0904BBB83E7822 /* PhoneLocation.swift */,
+				FC0FD7AC298EBE3E62C19E1D /* Push.swift */,
 				FEFD0F30B73FE6897D353DCC /* ShopModel.swift */,
+				80D0F56461B71F53FE13D2C6 /* StoreRegions.swift */,
 			);
 			path = Model;
 			sourceTree = "<group>";
@@ -121,6 +135,7 @@
 			children = (
 				E0B06ADB32F6D43DA346E8A4 /* BagProtocol.swift */,
 				0D32D2EE7E45BB2688AF5852 /* Cards.swift */,
+				78D7D65417D04B3B7A4AF2A9 /* Notifications.swift */,
 				F71BD07149EC0BF66C6072EB /* SpacetimeClient.swift */,
 			);
 			path = Core;
@@ -203,21 +218,26 @@
 			files = (
 				C69A84A91574CBB8CC415474 /* AccountModel.swift in Sources */,
 				6D8243C7AB1029B7A270FED2 /* AccountView.swift in Sources */,
+				6CA1EF7E77BBE0F07162A8E1 /* AppRouter.swift in Sources */,
 				BB9DC2EC65B1B8F5DB11CAF0 /* AuthView.swift in Sources */,
 				37D48483036C3B7FB8269B6F /* BagLink.swift in Sources */,
 				6B3B4969E7A09125BE7E5D9A /* BagProtocol.swift in Sources */,
 				FF827902FAAE836866565786 /* CardViews.swift in Sources */,
 				E3291261BA6A3B4DC471DCFE /* Cards.swift in Sources */,
 				BDF34DCB00040955FAD2D814 /* KeychainTokenStore.swift in Sources */,
+				A20F4554151DA87583CD726A /* NotificationSettingsView.swift in Sources */,
+				B25FDB05335B19BF05D33CAB /* Notifications.swift in Sources */,
 				D0EE2DC969365CABBC0E8F17 /* Notify.swift in Sources */,
 				9393C67DEFA7C04674E62E97 /* PairingView.swift in Sources */,
 				DE5A6BF05D514F3B166080C2 /* PhoneLocation.swift in Sources */,
+				E3DAE804F773F480093AEBBC /* Push.swift in Sources */,
 				4F852B0345417B2FF0E93903 /* ReceiptView.swift in Sources */,
 				7E8597649B41FC0A8BE4A8F0 /* RootView.swift in Sources */,
 				1D0822D1FAD098BCF981AE08 /* ShopModel.swift in Sources */,
 				67DE1E89613532E87FA4E398 /* ShopView.swift in Sources */,
 				541139E82154F3B3C76A8A32 /* SmartBagApp.swift in Sources */,
 				957E2BAE13A0D9F7CFB4F4E9 /* SpacetimeClient.swift in Sources */,
+				91B97E299160F66D68C93884 /* StoreRegions.swift in Sources */,
 				23108993E459AF9A44243C49 /* Theme.swift in Sources */,
 				858BE1C3E69BB588999A95AD /* TripsView.swift in Sources */,
 				512146FD7A181927FCAA2E29 /* WelcomeView.swift in Sources */,
@@ -261,7 +281,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -274,7 +294,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				MARKETING_VERSION = 1.2;
+				MARKETING_VERSION = 1.3;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -343,7 +363,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -362,7 +382,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				MARKETING_VERSION = 1.2;
+				MARKETING_VERSION = 1.3;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

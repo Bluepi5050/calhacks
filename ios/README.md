@@ -79,6 +79,44 @@ PhoneLocation, Notify and the Keychain store were reviewed but not compiled. Exp
 - Approximate location (Precise off) can't identify the store; the app shows a hint and asks for temporary full accuracy.
 - Not yet run on a physical iPhone or bag hardware.
 
+## 1.3: notifications and background walk-out
+
+- Local notifications (no keys, shown by the phone itself; copy in `Core/Notifications.swift`, same words as the
+  module's pushes): walk-out charged ("Paid $11.18 at Bayside Grocer" / "2 items with Visa •••• 4242. Exit code SRF6WQ."),
+  payment due ("$11.18 for 2 items. No card was on file: show exit code … to staff to pay." There is no in-app way to
+  settle a past trip, so it isn't promised), store arrival once per visit, bag disconnected for 20 s in a store with
+  items. Request id per event (`trip-<orderId>`, `store-<id>`, `bag-lost`), plus the persisted last-seen order, so a
+  receipt never notifies twice. With the app open: no banner (it's on screen), kept in Notification Center.
+- Tap a trip / payment-due notification -> Trips opens that receipt (by exit code); store / bag -> Shop (`AppRouter`).
+- Account › Notifications: Trips and receipts, Store arrivals, Bag alerts, Account security (all on; stored on the phone;
+  trips/security also sent with `push_set_prefs` when registered), notification permission, background location
+  (Always / While using with "Allow all the time"), Send a test notification.
+- Background walk-out (`Model/StoreRegions.swift`): with Always location, monitors the 20 nearest stores
+  (`shop_nearby_stores`, radius + 40 m), refreshed on significant location change. A crossing wakes or relaunches the app;
+  it reports two fresh fixes ≥ 3 s apart inside a background task (`ShopModel.checkNow`); on expiry it stops asking for
+  fixes and ends the task. Setup adds a "Pay with the app closed" screen (Always, with Not now).
+  Honest limits: With While using, keep the app open while leaving. iOS decides when region events arrive, and if the
+  shopper force-quits Bag It, iOS may not wake it: nothing is promised after a force-quit.
+- `PAID <code>` goes to the bag only for paid trips (payment due keeps the bag's light dark).
+- Server push (optional, OFF by default, `Model/Push.swift`): compiled only when the FirebaseMessaging Swift package is
+  added, active only when `GoogleService-Info.plist` is bundled; then the APNs token goes to Firebase and the FCM token
+  to `push_register`. Also needs a paid Apple Developer account (Push Notifications capability / aps-environment and an
+  APNs key in Firebase); a free Personal Team can't sign that, so the entitlement is not in the project. No keys are in
+  the repo. Server push has NOT been tested: no Firebase project, no APNs, no device.
+- Verified on Linux: push/nearby codecs, notification copy and prefs, live `shop_nearby_stores`, `push_register` /
+  `push_set_prefs` / `push_test` ("push not configured") / `push_unregister` with a fresh account, and the real
+  ShopModel through arrival (once per visit), bag alert, a region-woken exit check that walks out with no card
+  (payment due, no PAID, one notification). Not verifiable here: UserNotifications, CoreLocation region monitoring,
+  background tasks, APNs/FCM; all need Xcode and an iPhone.
+
+- Module v5.2 compatibility (durable order ownership): receipts show `Visa •••• 4242` without the nickname
+  (CartState.payment keeps the full label); Trips/Last trip show only trips owned by the current login (legacy orders
+  from before v5.2 appear nowhere, by design); sign-out / account switch / sign-up / delete are refused mid-trip with a
+  plain message, shown verbatim, and nothing local (state, cache, token) changes until the module confirms; the bag
+  name is re-sent (`shop_set_bag`) after every successful log-in / sign-up because v5.2 clears it on account changes.
+- Server copy note: the module's payment-due push says "Add a card in Bag It to settle it". No settle API exists, so
+  the phone's own notification says to show the exit code to staff; the server copy should change to match.
+
 ## 1.2: accounts, wallet, pairing, tabs
 
 - Signed out: Welcome ('The bag that checks you out.') -> Create account / Log in. No forgot-password (no email service).

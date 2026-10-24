@@ -624,12 +624,42 @@ SCREENS_12 = [
 AX_12 = [("45-create-account-ax", "Create account, accessibility text size", lambda: create_account(L, ax=True)),
          ("46-wallet-ax", "Wallet, accessibility text size", lambda: wallet(L, ax=True))]
 
+# ---------------------------------------------------------------- 1.3: notifications
+def setup_always(theme=L):
+    inner = (f'<div style="padding-top:48px">{sym("location.fill", 40)}</div><div class="display" style="margin-top:32px">Pay with the app closed</div>'
+             '<div class="body muted" style="margin-top:12px">Allow Bag It to use your location all the time so leaving a store pays even when the app is closed.</div>'
+             '<div class="cap muted" style="margin-top:16px">Choose Change to Always Allow. If you force-quit Bag It, iOS may not wake it, so leave it running in the background. You can change this later in Account › Notifications.</div>')
+    bottom = '<div class="bottom" style="padding-top:16px;padding-bottom:42px;display:flex;flex-direction:column;gap:8px"><div class="pill">Allow all the time</div><div class="pill sec">Not now</div></div>'
+    return screen(inner, bottom, theme, flowbar(step=(1, 3)))
+
+def switch(on=True):
+    return (f'<span style="width:51px;height:31px;border-radius:16px;background:{"var(--ink)" if on else "var(--hair)"};position:relative;flex:none">'
+            f'<span style="position:absolute;{"right" if on else "left"}:2px;top:2px;width:27px;height:27px;border-radius:50%;background:var(--bg)"></span></span>')
+
+def notification_settings(theme=L):
+    def t(title, why, on=True): return row(f'{two(title, why)}{switch(on)}', chevron=False)
+    def s(title, word, bad=False, act=None):
+        a = f'<span class="act" style="margin-right:-8px">{act}</span>' if act else ""
+        return row(f'{two(title, word, bottom_cls="cap " + ("bad" if bad else "muted"))}{a}', chevron=False)
+    inner = (title_block("Notifications") + section("Tell me about", top=32)
+             + t("Trips and receipts", "When a walk-out is charged, or payment is due.")
+             + t("Store arrivals", "Once when you walk into a Bag It store.")
+             + t("Bag alerts", "If your bag disconnects while you shop.", True)
+             + t("Account security", "Sign-ins and new cards on your other phones. Needs server push, which isn’t set up yet.")
+             + section("On this phone", top=32) + s("Notifications", "On") + s("Background location", "While using", True, "Allow all the time")
+             + '<div class="cap muted" style="margin-top:12px">With While using, keep Bag It open while you leave so the walk-out is noticed.</div>'
+             + '<div class="pill sec" style="margin-top:32px">Send a test notification</div><div class="cap muted" style="margin-top:8px">Sent from this phone.</div>')
+    return sheet(scroll(title_block("Account", top=24)) + tabbar(3), flowbar(close="Done") + f'<div class="scroll" style="padding-top:0">{inner}</div>', 790, theme)
+
+SCREENS_13 = [("47-setup-always-location", "Setup: location all the time (honest about force-quit)", setup_always),
+              ("48-notification-settings", "Account › Notifications", notification_settings)]
+
 if __name__ == "__main__":
     out = sys.argv[1] if len(sys.argv) > 1 else "design/reference"
     os.makedirs(out, exist_ok=True)
     if "--1.2" in sys.argv:                     # 1.2 screens: light + dark, plus large text for sign-up and wallet
         made = []
-        for slug, title, fn in SCREENS_12:
+        for slug, title, fn in SCREENS_12 + SCREENS_13:
             for suffix, theme in (("", L), ("-dark", D)):
                 open(os.path.join(out, slug + suffix + ".html"), "w").write(fn(theme=theme)); made.append(slug + suffix)
         for slug, title, fn in AX_12:

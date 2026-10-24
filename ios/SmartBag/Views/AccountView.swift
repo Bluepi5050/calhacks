@@ -16,6 +16,7 @@ struct AccountView: View {
     @State private var deleting = false
     @State private var signOutError: String?
     @State private var notifications = "…"
+    @State private var notificationSettings = false
 
     var body: some View {
         let s = account.state
@@ -43,6 +44,14 @@ struct AccountView: View {
                     Text((s?.bags.isEmpty ?? true) ? "Pair your bag" : "Pair a bag").font(TypeScale.body).foregroundColor(Theme.ink)
                     Spacer()
                 }
+
+                SectionLabel(text: "Notifications").padding(.top, Space.xxl)
+                RowButton(action: { notificationSettings = true }) {
+                    Text("Notifications").font(TypeScale.body).foregroundColor(Theme.ink)
+                    Spacer()
+                    Text(notifications).font(TypeScale.caption).foregroundColor(Theme.muted)
+                }
+                .accessibilityHint("Choose what Bag It tells you about.")
 
                 SectionLabel(text: "Permissions").padding(.top, Space.xxl)
                 permission("Bluetooth", bluetooth)
@@ -82,6 +91,9 @@ struct AccountView: View {
         .fullScreenCover(isPresented: $pairing) { PairingFlow { pairing = false }.appModels() }
         .sheet(item: $openBag) { b in BagSheet(bagId: b.id) { openBag = nil }.presentationDetents([.medium, .large]).appModels() }
         .sheet(isPresented: $deleting) { DeleteAccountSheet { deleting = false }.appModels() }
+        .sheet(isPresented: $notificationSettings, onDismiss: { Task { await readNotifications() } }) {
+            NotificationSettingsView { notificationSettings = false }.appModels()
+        }
         .task { await readNotifications() }
         .onChange(of: phase) { p in if p == .active { Task { await readNotifications() } } }
     }

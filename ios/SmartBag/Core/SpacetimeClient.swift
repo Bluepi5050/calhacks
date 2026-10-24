@@ -247,6 +247,43 @@ public struct AccountState: Equatable, Codable, Sendable {
 
 func pad2(_ n: Int) -> String { n < 10 ? "0\(n)" : "\(n)" }
 
+// MARK: - Push (module v5.1) and nearby stores for background region monitoring
+
+/// Server push state for this phone. `serverPush` = the module has an FCM project configured.
+public struct PushState: Equatable, Sendable {
+    public let serverPush: Bool
+    public let registered: Bool
+    public let prefs: String                         // comma list of 'trips,security'
+    public static func decode(_ data: Data) throws -> PushState {
+        var r = BsatnReader(data)
+        let s = PushState(serverPush: try r.bool(), registered: try r.bool(), prefs: try r.string())
+        if r.remaining != 0 { throw SmartBagError.decode("\(r.remaining) trailing bytes") }
+        return s
+    }
+}
+
+public struct NearbyStore: Equatable, Sendable, Identifiable {
+    public let id: String, name: String, address: String
+    public let lat: Double, lng: Double
+    public let radiusM: Int, distanceM: Int
+    public static func decodeList(_ data: Data) throws -> [NearbyStore] {
+        var r = BsatnReader(data)
+        let list = try r.array { r in
+            NearbyStore(id: try r.string(), name: try r.string(), address: try r.string(), lat: try r.f64(), lng: try r.f64(),
+                        radiusM: Int(try r.u32()), distanceM: Int(try r.u32()))
+        }
+        if r.remaining != 0 { throw SmartBagError.decode("\(r.remaining) trailing bytes") }
+        return list
+    }
+}
+
+func decodeString(_ data: Data) throws -> String {
+    var r = BsatnReader(data)
+    let s = try r.string()
+    if r.remaining != 0 { throw SmartBagError.decode("\(r.remaining) trailing bytes") }
+    return s
+}
+
 // MARK: - Wire frames
 
 public enum StdbFrames {
@@ -498,6 +535,21 @@ public actor SpacetimeClient {
     public func trips(limit: Int = 50) async throws -> [Receipt] {
         try CartState.decodeReceipts(try await call("shop_trips", BsatnWriter().u32(UInt32(clamping: limit)).data))
     }
+
+    /// Up to `limit` stores nearest to a point (for CLCircularRegion monitoring: iOS allows 20 regions).
+    public func nearbyStores(lat: Double, lng: Double, limit: Int = 20) async throws -> [NearbyStore] {
+        try NearbyStore.decodeList(try await call("shop_nearby_stores", BsatnWriter().f64(lat).f64(lng).u32(UInt32(clamping: limit)).data))
+    }
+
+    // Server push (module v5.1). push_register needs a signed-in phone and an FCM token.
+    public func pushRegister(token: String, prefs: String) async throws -> PushState {
+        try PushState.decode(try await call("push_register", BsatnWriter().string("ios").string(token).string(prefs).data))
+    }
+    public func pushSetPrefs(_ prefs: String) async throws -> PushState { try PushState.decode(try await call("push_set_prefs", Self.str(prefs))) }
+    public func pushUnregister() async throws -> PushState { try PushState.decode(try await call("push_unregister", Data())) }
+    public func pushStatus() async throws -> PushState { try PushState.decode(try await call("push_status", Data())) }
+    /// 'sent 1/1', 'push not configured', 'not registered', or an error description.
+    public func pushTest() async throws -> String { try decodeString(try await call("push_test", Data())) }
 
     private static func str(_ s: String) -> Data { BsatnWriter().string(s).data }
     private func cart(_ name: String, _ args: Data) async throws -> CartState { try CartState.decode(try await call(name, args)) }

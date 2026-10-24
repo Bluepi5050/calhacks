@@ -21,6 +21,9 @@ struct RootView: View {
             }
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: route)
+        .onChange(of: account.signedIn) { signedIn in
+            if !signedIn { StoreRegions.shared.stop(); AppRouter.shared.tab = 0; AppRouter.shared.pendingCode = nil }
+        }
     }
 }
 
@@ -54,12 +57,12 @@ struct SetupFlow: View {
 struct MainTabs: View {
     @EnvironmentObject var m: ShopModel
     @EnvironmentObject var account: AccountModel
-    @State private var tab = 0
+    @ObservedObject private var router = AppRouter.shared
 
     init() { TabBarStyle.apply() }
 
     var body: some View {
-        TabView(selection: $tab) {
+        TabView(selection: $router.tab) {
             ShopView()
                 .tabItem { Label("Shop", systemImage: "bag").environment(\.symbolVariants, .none) }.tag(0)
             TripsView()
@@ -72,6 +75,8 @@ struct MainTabs: View {
         .onAppear {
             UserDefaults.standard.set(true, forKey: "onboarded")
             m.start()
+            StoreRegions.shared.activate()
+            PushRegistrar.shared.start()
         }
         .task { await account.refresh() }
     }

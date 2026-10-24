@@ -57,12 +57,22 @@ final class PhoneLocation: NSObject, CLLocationManagerDelegate {
         }
         if manager.authorizationStatus == .authorizedAlways {
             manager.startMonitoringSignificantLocationChanges()
-        } else if !UserDefaults.standard.bool(forKey: "asked_always") {
-            // One-time upgrade prompt. Declining is fine: background updates still run while the session is active.
-            UserDefaults.standard.set(true, forKey: "asked_always")
-            manager.requestAlwaysAuthorization()
         }
+        // "Always" is asked on its own priming screen (setup) or from Account › Notifications, never by surprise.
     }
+
+    /// iOS shows the "Change to Always Allow" prompt once, after While Using was granted. Returns false when iOS
+    /// won't ask again (then only Settings can change it).
+    @discardableResult
+    func requestAlways() -> Bool {
+        guard manager.authorizationStatus == .authorizedWhenInUse, !UserDefaults.standard.bool(forKey: "asked_always") else { return false }
+        UserDefaults.standard.set(true, forKey: "asked_always")
+        manager.requestAlwaysAuthorization()
+        return true
+    }
+
+    var authorization: CLAuthorizationStatus { manager.authorizationStatus }
+    var precise: Bool { manager.accuracyAuthorization == .fullAccuracy }
 
     func stop() {
         running = false

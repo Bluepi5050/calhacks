@@ -7,6 +7,7 @@ struct CLLocationCoordinate2D { var latitude: Double; var longitude: Double }
 class CLLocation {
     let coordinate: CLLocationCoordinate2D
     let horizontalAccuracy: Double
+    let timestamp = Date()
     init(lat: Double, lng: Double, acc: Double) { coordinate = .init(latitude: lat, longitude: lng); horizontalAccuracy = acc }
     func distance(from o: CLLocation) -> Double {
         let r = 6_371_000.0, p = Double.pi / 180
@@ -51,9 +52,8 @@ final class PhoneLocation {
 
 final class Notify {
     static let shared = Notify()
-    var posted: [Receipt] = []
-    func requestPermission() {}
-    func paid(_ r: Receipt) { posted.append(r) }
+    var posted: [NotificationText] = []
+    func post(_ t: NotificationText) { posted.append(t) }
 }
 
 final class KeychainTokenStore: TokenStore, @unchecked Sendable {

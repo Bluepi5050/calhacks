@@ -66,6 +66,7 @@ final class AccountModel: ObservableObject {
         let s = try await api.signUp(name: name, email: email, password: password)
         beginSetup(for: s)
         apply(s)
+        shop?.resendBag()
     }
 
     func signIn(email: String, password: String) async throws {
@@ -73,8 +74,11 @@ final class AccountModel: ObservableObject {
         let s = try await api.signIn(email: email, password: password)
         beginSetup(for: s)
         apply(s)
+        shop?.resendBag()
     }
 
+    // Mid-trip the module refuses account changes ("You're in the middle of a trip. ..."): the call throws, nothing
+    // here changes (state, cache, token) and the screen shows that message. Only a confirmed reply is applied.
     func signOut() async throws {
         epoch += 1
         let s = try await api.signOut()
