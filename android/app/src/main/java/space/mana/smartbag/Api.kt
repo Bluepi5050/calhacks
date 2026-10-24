@@ -1,0 +1,185 @@
+package space.mana.smartbag
+
+import android.content.Context
+import android.content.SharedPreferences
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+import okio.ByteString
+import okio.ByteString.Companion.toByteString
+import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+
+data class Line(val sku: String, val name: String, val qty: Int, val priceCents: Int, val lineCents: Int, val sold: Boolean, val addedMicros: Long)
+data class ReceiptLine(val sku: String, val name: String, val price: Int, val qty: Int)
+data class Receipt(
+    val id: Long, val code: String, val storeName: String, val total: Int, val count: Int, val unpriced: Int,
+    val status: String, val payment: String, val paidAt: Long, val items: List<ReceiptLine>,
+)
+data class CartState(
+    val storeId: String, val storeName: String, val storeAddress: String, val distanceM: Int,
+    val nearestName: String, val nearestM: Int, val bag: String, val payment: String, val leaving: Boolean,
+    val totalCents: Int, val itemCount: Int, val lines: List<Line>, val lastReceipt: Receipt?,
+)
+
+class ApiException(message: String) : Exception(message)
+
+/** Little-endian BSATN, the SpacetimeDB wire format. */
+class Bw {
+    private val out = ByteArrayOutputStream()
+    private fun le(n: Int, f: (ByteBuffer) -> Unit) = apply { val b = ByteBuffer.allocate(n).order(ByteOrder.LITTLE_ENDIAN); f(b); out.write(b.array()) }
+    fun u8(v: Int) = apply { out.write(v) }
+    fun u32(v: Int) = le(4) { it.putInt(v) }
+    fun f64(v: Double) = le(8) { it.putDouble(v) }
+    fun str(s: String) = apply { val b = s.toByteArray(); u32(b.size); out.write(b) }
+    fun bytes(b: ByteArray) = apply { u32(b.size); out.write(b) }
+    fun done(): ByteArray = out.toByteArray()
+}
+
+class Br(private val b: ByteArray, start: Int = 0) {
+    private val buf: ByteBuffer = ByteBuffer.wrap(b).order(ByteOrder.LITTLE_ENDIAN).also { it.position(start) }
+    fun u8() = buf.get().toInt() and 0xff
+    fun u32() = buf.int
+    fun i64() = buf.long
+    fun bool() = u8() != 0
+    fun raw(n: Int) = ByteArray(n).also { buf.get(it) }
+    fun str() = String(raw(u32()))
+    fun bytes() = raw(u32())
+}
+
+/**
+ * SmartBag's backend is a SpacetimeDB module (database smartcart-5dt35 on Maincloud).
+ * The phone keeps ONE WebSocket open (SpacetimeDB's v2 binary protocol) and calls the module's
+ * procedures over it, request/response: each call runs in a database transaction and returns the
+ * shopper's fresh, priced bag. No HTTP per action, no subscriptions.
+ * Payment happens inside the database when a location fix shows the shopper has left the store.
+ */
+object Api {
+    private val host = BuildConfig.STDB_HOST.trimEnd('/')
+    private val db = BuildConfig.STDB_DB
+    private const val PROTOCOL = "v2.bsatn.spacetimedb"
+    private val http = OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS).connectTimeout(10, TimeUnit.SECONDS).readTimeout(0, TimeUnit.SECONDS).build()
+    private var prefs: SharedPreferences? = null
+    @Volatile private var token: String? = null
+    @Volatile private var socket: WebSocket? = null
+    private val connectLock = Mutex()
+    private val nextId = AtomicInteger(1)
+    private val pending = ConcurrentHashMap<Int, CompletableDeferred<ByteArray>>()
+
+    fun init(ctx: Context) {
+        prefs = ctx.getSharedPreferences("smartbag", 0)
+        token = prefs?.getString("stdb_token", null)
+    }
+
+    private fun post(path: String, auth: String?): Pair<Int, String> {
+        val req = Request.Builder().url(host + path).post(ByteArray(0).toRequestBody("application/json".toMediaType()))
+        if (auth != null) req.header("Authorization", "Bearer $auth")
+        http.newCall(req.build()).execute().use { r -> return r.code to (r.body?.string() ?: "") }
+    }
+
+    private fun identityToken(): String {
+        token?.let { return it }
+        val (code, text) = post("/v1/identity", null)
+        if (code !in 200..299) throw ApiException("SmartBag is unavailable right now.")
+        return JSONObject(text).getString("token").also { token = it; prefs?.edit()?.putString("stdb_token", it)?.apply() }
+    }
+
+    /** Short-lived token for the WebSocket handshake. */
+    private fun socketToken(): String {
+        var (code, text) = post("/v1/identity/websocket-token", identityToken())
+        if (code == 401) {
+            token = null; prefs?.edit()?.remove("stdb_token")?.apply()
+            val r = post("/v1/identity/websocket-token", identityToken()); code = r.first; text = r.second
+        }
+        if (code !in 200..299) throw ApiException("SmartBag is unavailable right now ($code).")
+        return JSONObject(text).getString("token")
+    }
+
+    private suspend fun connected(): WebSocket = connectLock.withLock {
+        socket?.let { return it }
+        withContext(Dispatchers.IO) {
+            val wsToken = socketToken()
+            val opened = CompletableDeferred<WebSocket>()
+            val url = host.replaceFirst("http", "ws") + "/v1/database/$db/subscribe?compression=None&token=$wsToken"
+            http.newWebSocket(Request.Builder().url(url).header("Sec-WebSocket-Protocol", PROTOCOL).build(), object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) { opened.complete(webSocket) }
+                override fun onMessage(webSocket: WebSocket, bytes: ByteString) = onFrame(bytes.toByteArray())
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = lost(webSocket, "Connection closed.")
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    if (!opened.isCompleted) opened.completeExceptionally(ApiException("Can't reach SmartBag."))
+                    lost(webSocket, "Connection lost.")
+                }
+            })
+            withTimeout(15_000) { opened.await() }.also { socket = it }
+        }
+    }
+
+    private fun lost(ws: WebSocket, why: String) {
+        if (socket === ws) socket = null
+        pending.keys.toList().forEach { id -> pending.remove(id)?.completeExceptionally(ApiException(why)) }
+    }
+
+    // Server frames: [compression=0][ServerMessage]. Tag 7 = ProcedureResult{status, timestamp, duration, requestId}.
+    private fun onFrame(f: ByteArray) {
+        if (f.size < 2 || f[0].toInt() != 0) return
+        val r = Br(f, 1)
+        if (r.u8() != 7) return
+        val status = r.u8()
+        val payload = if (status == 0) r.bytes() else null
+        val error = if (status != 0) r.str() else null
+        r.i64(); r.i64()
+        val id = r.u32()
+        val d = pending.remove(id) ?: return
+        if (payload != null) d.complete(payload) else d.completeExceptionally(ApiException(error?.take(160) ?: "Request failed."))
+    }
+
+    /** ClientMessage tag 4 = CallProcedure{requestId, flags, name, args}. */
+    private suspend fun call(procedure: String, args: ByteArray): ByteArray {
+        val ws = connected()
+        val id = nextId.getAndIncrement()
+        val d = CompletableDeferred<ByteArray>()
+        pending[id] = d
+        val frame = Bw().u8(4).u32(id).u8(0).str(procedure).bytes(args).done()
+        if (!ws.send(frame.toByteString())) { pending.remove(id); lost(ws, "Connection lost."); throw ApiException("Connection lost.") }
+        return try { withTimeout(20_000) { d.await() } } finally { pending.remove(id) }
+    }
+
+    private fun receipt(r: Br): Receipt? {
+        val id = r.i64(); val code = r.str(); val store = r.str(); val total = r.u32(); val count = r.u32(); val unpriced = r.u32()
+        val status = r.str(); val payment = r.str(); val paid = r.i64()
+        val items = List(r.u32()) { ReceiptLine(r.str(), r.str(), r.u32(), r.u32()) }
+        return if (id == 0L) null else Receipt(id, code, store, total, count, unpriced, status, payment, paid / 1000, items)
+    }
+
+    private fun state(b: ByteArray): CartState {
+        val r = Br(b)
+        val storeId = r.str(); val storeName = r.str(); val addr = r.str(); val dist = r.u32()
+        val nearest = r.str(); val nearestM = r.u32(); val bag = r.str(); val payment = r.str(); val leaving = r.bool()
+        val total = r.u32(); val count = r.u32()
+        val lines = List(r.u32()) { Line(r.str(), r.str(), r.u32(), r.u32(), r.u32(), r.bool(), r.i64()) }
+        return CartState(storeId, storeName, addr, dist, nearest, nearestM, bag, payment, leaving, total, count, lines, receipt(r))
+    }
+
+    suspend fun current() = state(call("shop_state", ByteArray(0)))
+    /** A GPS fix. The database places the phone in a store, or, if it has just left one, charges the bag. */
+    suspend fun locate(lat: Double, lng: Double, acc: Float) = state(call("shop_locate", Bw().f64(lat).f64(lng).f64(acc.toDouble()).done()))
+    suspend fun bagLine(line: String) = state(call("shop_bag_line", Bw().str(line).done()))
+    suspend fun removeItem(sku: String) = state(call("shop_remove", Bw().str(sku).done()))
+    suspend fun setBag(name: String) = state(call("shop_set_bag", Bw().str(name).done()))
+    suspend fun setPayment(label: String) = state(call("shop_set_payment", Bw().str(label).done()))
+}
