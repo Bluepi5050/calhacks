@@ -216,10 +216,29 @@ const pushDevice = table({ name: 'push_device' }, {
   updatedAt: t.timestamp(),
 });
 
+// Ownership (v5.2, additive): who an order belongs to is fixed in the transaction that writes it, from the
+// phone's login at that moment, and never recomputed from the current login. accountId 0 = a guest (signed-out
+// phone). Orders written before v5.2 have no row here: their owner is unknown, so they stay with the store
+// (shop_order) but never appear in anyone's trip history or lastReceipt.
+const orderOwner = table({ name: 'order_owner' }, {
+  orderId: t.u64().primaryKey(),
+  accountId: t.u64().index('btree'),
+  identity: t.identity().index('btree'),
+  at: t.timestamp(),
+});
+// Who started the bag currently on a phone (accountId 0 = guest). Written when an empty bag gets its first item.
+// A walk-out only charges the wallet of the login that started the bag; see walkOut and the switch guard.
+const cartSession = table({ name: 'cart_session' }, {
+  identity: t.identity().primaryKey(),
+  accountId: t.u64(),
+  startedAt: t.timestamp(),
+});
+
 const spacetimedb = schema({
   store, product, shopper, cartItem, shopOrder, orderLine, bagEvent, operator, config, storeStaff, storeInvite, cleanupTimer,
   account, profile, staffEmailInvite, activity, storeOwner, memberName,
   shopperAccount, shopperLogin, paymentCard, pairedBag, pushDevice,
+  orderOwner, cartSession,
 });
 export default spacetimedb;
 
@@ -331,6 +350,63 @@ function shopperRow(ctx: Ctx) {
     lat: 0, lng: 0, bag: '', payment: '', outsideFixes: 0, updatedAt: ctx.timestamp,
   });
 }
+// The account a phone identity is signed in to right now (0 = guest).
+function principalOf(ctx: Ctx, who: any): bigint {
+  const l = ctx.db.shopperLogin.identity.find(who);
+  return l && ctx.db.shopperAccount.id.find(l.accountId) ? l.accountId : 0n;
+}
+function hasCart(ctx: Ctx, who: any) { for (const _c of ctx.db.cartItem.by_shopper_sku.filter(who)) return true; return false; }
+// Whose bag is on this phone: the login that put the first item in (falls back to the current login for bags
+// started before v5.2).
+function cartOwnerOf(ctx: Ctx, who: any): bigint {
+  const cs = ctx.db.cartSession.identity.find(who);
+  return cs ? cs.accountId : principalOf(ctx, who);
+}
+// Mid-trip = items in the bag while in a store. Changing account then is refused: the bag is only ever charged
+// to the login that started it.
+function midTrip(ctx: Ctx, who: any) {
+  const row = ctx.db.shopper.identity.find(who);
+  return !!row && !!row.storeId && hasCart(ctx, who);
+}
+// What a walk-out would charge: a signed-in phone always pays with its account's default card (the wallet is
+// authoritative); a guest uses the label on its shopper row (demo).
+function paymentFor(ctx: Ctx, row: { identity: any; payment: string }) {
+  const p = principalOf(ctx, row.identity);
+  return p ? defaultLabel(ctx, p) : row.payment;
+}
+// The label written on the (public) order: brand and last four only, never the card's nickname.
+function chargeLabel(ctx: Ctx, row: { identity: any; payment: string }) {
+  const p = principalOf(ctx, row.identity);
+  if (!p) return row.payment;
+  const d = cardsOf(ctx, p).find((c) => c.isDefault);
+  return d ? d.brand + ' •••• ' + d.last4 : '';
+}
+// The phone `who` is about to change account (sign-in/up to another account, sign-out, account deletion), and
+// is not mid-trip. Nothing of the previous login may stay on it: drop an out-of-store bag (never priced or
+// charged), its session, the bag name and the payment label. The new login's payment is synced afterwards.
+function resetForNewPrincipal(ctx: Ctx, who: any) {
+  if (midTrip(ctx, who)) throw new SenderError('You’re in the middle of a trip. Walk out or take everything out of your bag first.');
+  for (const c of [...ctx.db.cartItem.by_shopper_sku.filter(who)]) ctx.db.cartItem.id.delete(c.id);
+  ctx.db.cartSession.identity.delete(who);
+  const row = ctx.db.shopper.identity.find(who);
+  if (row) ctx.db.shopper.identity.update({ ...row, bag: '', payment: '', outsideFixes: 0, updatedAt: ctx.timestamp });
+}
+const SWITCH_MID_TRIP = 'You’re in the middle of a trip. Walk out or take everything out of your bag before you switch accounts.';
+const SIGNOUT_MID_TRIP = 'You’re in the middle of a trip. Walk out or take everything out of your bag before you sign out.';
+const DELETE_MID_TRIP = 'One of your phones is in the middle of a trip. Finish it before you delete your account.';
+// Orders a phone may see as its own: written on this identity AND owned by its current login.
+function latestOwnOrder(ctx: Ctx) {
+  const p = principalOf(ctx, ctx.sender);
+  let best: bigint = 0n;
+  for (const o of ctx.db.orderOwner.identity.filter(ctx.sender)) if (o.accountId === p && o.orderId > best) best = o.orderId;
+  return best ? ctx.db.shopOrder.id.find(best) : null;
+}
+function maxOrderIdOn(ctx: Ctx, who: any): bigint {
+  let best: bigint = 0n;
+  for (const o of ctx.db.orderOwner.identity.filter(who)) if (o.orderId > best) best = o.orderId;
+  return best;
+}
+
 function logBag(ctx: Ctx, storeId: string, line: string, result: string) {
   ctx.db.bagEvent.insert({ id: 0n, shopper: ctx.sender, storeId, line, result, at: ctx.timestamp });
 }
@@ -419,6 +495,13 @@ function walkOut(ctx: Ctx, st: { id: string; name: string }) {
   const row = ctx.db.shopper.identity.find(ctx.sender)!;
   const items = [...ctx.db.cartItem.by_shopper_sku.filter(ctx.sender)];
   ctx.db.shopper.identity.update({ ...row, storeId: '', storeName: '', storeAddress: '', outsideFixes: 0 });
+  // Ownership is decided here, inside the charging transaction. If the bag was started under a different login
+  // than the current one (the switch guard should make this impossible), never charge the current login's
+  // wallet: record the trip for whoever started the bag, as payment due.
+  const principal = principalOf(ctx, ctx.sender);
+  const owner = cartOwnerOf(ctx, ctx.sender);
+  const payment = owner === principal ? chargeLabel(ctx, row) : '';
+  ctx.db.cartSession.identity.delete(ctx.sender);
   if (items.length === 0) return null;
   const lines: Array<{ sku: string; name: string; priceCents: number; qty: number }> = [];
   let unpriced = 0;
@@ -436,10 +519,11 @@ function walkOut(ctx: Ctx, st: { id: string; name: string }) {
   const order = ctx.db.shopOrder.insert({
     id: 0n, code, requestId: 'walkout-' + code, shopper: ctx.sender, storeId: st.id, day, storeName: st.name,
     totalCents: total, itemCount: count, unpricedCount: unpriced,
-    status: row.payment ? 'paid' : 'payment_due', payment: row.payment, trigger: 'walkout', paidAt: ctx.timestamp,
+    status: payment ? 'paid' : 'payment_due', payment, trigger: 'walkout', paidAt: ctx.timestamp,
   });
+  ctx.db.orderOwner.insert({ orderId: order.id, accountId: owner, identity: ctx.sender, at: ctx.timestamp });
   for (const l of lines) ctx.db.orderLine.insert({ id: 0n, orderId: order.id, storeId: st.id, day, ...l });
-  logBag(ctx, st.id, 'WALKOUT ' + code, (row.payment ? 'charged ' : 'payment due ') + '$' + (total / 100).toFixed(2));
+  logBag(ctx, st.id, 'WALKOUT ' + code, (payment ? 'charged ' : 'payment due ') + '$' + (total / 100).toFixed(2));
   return order;
 }
 
@@ -478,6 +562,10 @@ function doBagLine(ctx: Ctx, rawIn: string) {
   const cur = findCartLine(ctx, ev.sku);
   const p = sh.storeId ? findProduct(ctx, sh.storeId, ev.sku) : null;
   if (ev.op === 'add') {
+    if (!hasCart(ctx, ctx.sender)) {
+      const sess = { identity: ctx.sender, accountId: principalOf(ctx, ctx.sender), startedAt: ctx.timestamp };
+      if (ctx.db.cartSession.identity.find(ctx.sender)) ctx.db.cartSession.identity.update(sess); else ctx.db.cartSession.insert(sess);
+    }
     const tags = cur && cur.tags ? cur.tags.split(',') : [];
     if (ev.tag && tags.includes(ev.tag)) { logBag(ctx, sh.storeId, raw, 'already in bag'); return; }
     if (ev.tag) { tags.push(ev.tag); while (tags.length > 50) tags.shift(); }
@@ -552,11 +640,10 @@ function cartState(ctx: Ctx) {
   const storeId = s ? s.storeId : '';
   const lines = pricedLines(ctx, storeId);
   const sold = lines.filter(l => l.sold);
-  let last: any = null;
-  for (const o of ctx.db.shopOrder.shopper.filter(ctx.sender)) if (!last || o.id > last.id) last = o;
+  const last = latestOwnOrder(ctx);    // never another login's receipt, even on the same phone
   return {
     storeId, storeName: s ? s.storeName : '', storeAddress: s ? s.storeAddress : '', distanceM: s ? s.distanceM : 0,
-    nearestName: s ? s.nearestName : '', nearestM: s ? s.nearestM : 0, bag: s ? s.bag : '', payment: s ? s.payment : '',
+    nearestName: s ? s.nearestName : '', nearestM: s ? s.nearestM : 0, bag: s ? s.bag : '', payment: s ? paymentFor(ctx, s) : '',
     leaving: !!s && s.outsideFixes > 0,
     totalCents: sold.reduce((a, l) => a + l.lineCents, 0), itemCount: sold.reduce((a, l) => a + l.qty, 0), lines,
     lastReceipt: last ? receiptOf(ctx, last) : NO_RECEIPT,
@@ -568,11 +655,11 @@ function cartState(ctx: Ctx) {
 export const shopState = spacetimedb.procedure(CartState, ctx => ctx.withTx(tx => cartState(tx)));
 export const shopLocate = spacetimedb.procedure({ lat: t.f64(), lng: t.f64(), accuracyM: t.f64() }, CartState, (ctx, a) => {
   const r = ctx.withTx(tx => {
-    let before = 0n;
-    for (const o of tx.db.shopOrder.shopper.filter(tx.sender)) if (o.id > before) before = o.id;
+    const before = maxOrderIdOn(tx, tx.sender);
     doLocate(tx, a.lat, a.lng, a.accuracyM);
     const state = cartState(tx);
-    const order = state.lastReceipt.orderId > before ? tx.db.shopOrder.id.find(state.lastReceipt.orderId) : null;
+    const after = maxOrderIdOn(tx, tx.sender);
+    const order = after > before ? tx.db.shopOrder.id.find(after) : null;
     return { state, pushes: order ? tripPushes(tx, order) : [] };
   });
   if (r.pushes.length) { try { sendPushes(ctx, r.pushes); } catch (_e) { /* a push problem never fails the walk-out */ } }
@@ -614,7 +701,19 @@ export const myShopper = spacetimedb.view({ name: 'my_shopper', public: true }, 
   const s = ctx.db.shopper.identity.find(ctx.sender);
   return s ? [s] : [];
 });
-export const myOrders = spacetimedb.view({ name: 'my_orders', public: true }, t.array(shopOrder.rowType), ctx => [...ctx.db.shopOrder.shopper.filter(ctx.sender)]);
+// The caller's own orders: written on this identity and owned by its current login (not another account's
+// trips from the same phone; orders from before v5.2 have no known owner and are left out).
+export const myOrders = spacetimedb.view({ name: 'my_orders', public: true }, t.array(shopOrder.rowType), ctx => {
+  const l = ctx.db.shopperLogin.identity.find(ctx.sender);
+  const p = l ? l.accountId : 0n;
+  const out: any[] = [];
+  for (const o of ctx.db.orderOwner.identity.filter(ctx.sender)) {
+    if (o.accountId !== p) continue;
+    const r = ctx.db.shopOrder.id.find(o.orderId);
+    if (r) out.push(r);
+  }
+  return out;
+});
 
 // Stores the caller can manage, with their invite codes (admins: every store).
 const StaffStore = t.row('StaffStore', { storeId: t.string().primaryKey(), role: t.string(), inviteCode: t.string() });
@@ -664,7 +763,7 @@ export const cleanup = spacetimedb.reducer({ onSchedule: cleanupTimer }, { timer
     if (now - s.updatedAt.microsSinceUnixEpoch < IDLE_SHOPPER_MICROS) continue;
     let hasCart = false;
     for (const _c of ctx.db.cartItem.by_shopper_sku.filter(s.identity)) { hasCart = true; break; }
-    if (!hasCart) ctx.db.shopper.identity.delete(s.identity);
+    if (!hasCart) { ctx.db.shopper.identity.delete(s.identity); ctx.db.cartSession.identity.delete(s.identity); }
   }
 });
 
@@ -760,7 +859,7 @@ export const resetDemo = spacetimedb.reducer({ storeId: t.string() }, (ctx, { st
   for (const r of [...(storeId ? ctx.db.cartItem.storeId.filter(storeId) : ctx.db.cartItem.iter())]) ctx.db.cartItem.id.delete(r.id);
   for (const r of [...(storeId ? ctx.db.bagEvent.storeId.filter(storeId) : ctx.db.bagEvent.iter())]) ctx.db.bagEvent.id.delete(r.id);
   for (const r of [...ctx.db.orderLine.iter()]) if (match(r.storeId)) ctx.db.orderLine.id.delete(r.id);
-  for (const r of [...ctx.db.shopOrder.iter()]) if (match(r.storeId)) ctx.db.shopOrder.id.delete(r.id);
+  for (const r of [...ctx.db.shopOrder.iter()]) if (match(r.storeId)) { ctx.db.orderOwner.orderId.delete(r.id); ctx.db.shopOrder.id.delete(r.id); }
   for (const r of [...(storeId ? ctx.db.shopper.storeId.filter(storeId) : ctx.db.shopper.iter())]) ctx.db.shopper.identity.delete(r.identity);
   if (storeId) logActivity(ctx, storeId, 'reset the demo data');
 });
@@ -938,18 +1037,26 @@ export const myStoreActivity = spacetimedb.view({ name: 'my_store_activity', pub
 const PersonRow = t.row('PersonRow', { key: t.string().primaryKey(), storeId: t.string(), who: t.identity(), name: t.string() });
 export const myStorePeople = spacetimedb.view({ name: 'my_store_people', public: true }, t.array(PersonRow), (ctx) => {
   const out: any[] = [];
+  // Names are per phone identity, but a shared phone can carry orders of several accounts. An identity is named only
+  // if every recent order of it in this store is owned by its current login; otherwise it stays 'Guest ·id' rather
+  // than showing one person's name on another person's (or an unknown owner's) trip.
+  const principal = (who: any) => { const l = ctx.db.shopperLogin.identity.find(who); return l ? l.accountId : 0n; };
   for (const storeId of managedStores(ctx)) {
-    const seen = new Set<string>();
-    const add = (who: any) => {
-      const h = who.toHexString();
-      if (seen.has(h)) return;
-      seen.add(h);
+    const people = new Map<string, any>();
+    const mixed = new Set<string>();
+    for (const sh of ctx.db.shopper.storeId.filter(storeId)) people.set(sh.identity.toHexString(), sh.identity);
+    const days = (ctx.db.config.key.find('recent_days') || { value: '' }).value.split(',').filter(Boolean);
+    for (const day of days) for (const o of ctx.db.shopOrder.by_store_day.filter([storeId, day])) {
+      const h = o.shopper.toHexString();
+      people.set(h, o.shopper);
+      const ow = ctx.db.orderOwner.orderId.find(o.id);
+      if (!ow || ow.accountId !== principal(o.shopper)) mixed.add(h);
+    }
+    for (const [h, who] of people) {
+      if (mixed.has(h)) continue;
       const n = ctx.db.memberName.identity.find(who);
       if (n) out.push({ key: storeId + ':' + h, storeId, who, name: n.name });
-    };
-    for (const sh of ctx.db.shopper.storeId.filter(storeId)) add(sh.identity);
-    const days = (ctx.db.config.key.find('recent_days') || { value: '' }).value.split(',').filter(Boolean);
-    for (const day of days) for (const o of ctx.db.shopOrder.by_store_day.filter([storeId, day])) add(o.shopper);
+    }
   }
   return out;
 });
@@ -1037,9 +1144,11 @@ function defaultLabel(ctx: Ctx, accountId: bigint) {
   const d = cardsOf(ctx, accountId).find((c) => c.isDefault);
   return d ? cardLabel(d) : '';
 }
-// The walk-out charge reads shopper.payment, so keep every signed-in phone's row in step with the default card.
+// shopper is a public table, so a signed-in phone's row only says whether a card is on file (the console shows
+// 'no card on file' from it); the walk-out and CartState read the wallet itself (paymentFor / chargeLabel).
+const CARD_ON_FILE = 'Card on file';
 function syncPayment(ctx: Ctx, accountId: bigint) {
-  const label = defaultLabel(ctx, accountId);
+  const label = defaultLabel(ctx, accountId) ? CARD_ON_FILE : '';
   for (const l of [...ctx.db.shopperLogin.accountId.filter(accountId)]) {
     const row = ctx.db.shopper.identity.find(l.identity);
     if (row && row.payment !== label) ctx.db.shopper.identity.update({ ...row, payment: label, updatedAt: ctx.timestamp });
@@ -1052,6 +1161,10 @@ function setShopperName(ctx: Ctx, name: string) {
   if (n) ctx.db.memberName.identity.update({ identity: ctx.sender, name }); else ctx.db.memberName.insert({ identity: ctx.sender, name });
 }
 function linkLogin(ctx: Ctx, acct: { id: bigint; name: string }) {
+  if (principalOf(ctx, ctx.sender) !== acct.id) {
+    if (midTrip(ctx, ctx.sender)) throw new SenderError(SWITCH_MID_TRIP);
+    resetForNewPrincipal(ctx, ctx.sender);     // nothing of the previous login (or guest) stays on this phone
+  }
   const cur = loginOf(ctx);
   if (cur) ctx.db.shopperLogin.identity.update({ identity: ctx.sender, accountId: acct.id, signedInAt: ctx.timestamp });
   else ctx.db.shopperLogin.insert({ identity: ctx.sender, accountId: acct.id, signedInAt: ctx.timestamp });
@@ -1061,6 +1174,10 @@ function linkLogin(ctx: Ctx, acct: { id: bigint; name: string }) {
   if (pd && pd.accountId !== acct.id) ctx.db.pushDevice.identity.update({ ...pd, accountId: acct.id });
 }
 function unlinkLogin(ctx: Ctx) {
+  if (principalOf(ctx, ctx.sender) !== 0n) {
+    if (midTrip(ctx, ctx.sender)) throw new SenderError(SIGNOUT_MID_TRIP);
+    resetForNewPrincipal(ctx, ctx.sender);     // the next person on this phone starts with nothing of this account
+  }
   ctx.db.shopperLogin.identity.delete(ctx.sender);
   ctx.db.pushDevice.identity.delete(ctx.sender);   // a signed-out phone gets no account pushes
   const row = ctx.db.shopper.identity.find(ctx.sender);
@@ -1112,6 +1229,7 @@ function doSignUp(ctx: Ctx, name: string, email: string, password: string) {
   const n = cleanName(name), e = cleanEmail(email);
   checkPassword(password);
   if (ctx.db.shopperAccount.email.find(e)) throw new SenderError('That email already has an account. Log in instead.');
+  if (midTrip(ctx, ctx.sender)) throw new SenderError(SWITCH_MID_TRIP);
   const salt = randomCode(ctx, 16);
   const acct = ctx.db.shopperAccount.insert({
     id: 0n, email: e, name: n, passHash: pbkdf2(password, salt, PBKDF2_ITER), salt, iterations: PBKDF2_ITER,
@@ -1132,6 +1250,7 @@ function signInAttempt(ctx: Ctx, email: string, password: string): string {
     return lock ? 'Too many tries. Try again in 15 minutes.' : 'Email or password is wrong.';
   }
   if (acct.failedLogins) ctx.db.shopperAccount.id.update({ ...acct, failedLogins: 0 });
+  if (principalOf(ctx, ctx.sender) !== acct.id && midTrip(ctx, ctx.sender)) return SWITCH_MID_TRIP;
   linkLogin(ctx, ctx.db.shopperAccount.id.find(acct.id)!);
   return '';
 }
@@ -1139,7 +1258,9 @@ function doDeleteAccount(ctx: Ctx, password: string): string {
   const acct = requireLogin(ctx);
   if (!verifyPassword(ctx, acct, password)) return 'That password is wrong.';
   const logins = [...ctx.db.shopperLogin.accountId.filter(acct.id)];
+  if (logins.some((l) => midTrip(ctx, l.identity))) return DELETE_MID_TRIP;
   for (const l of logins) {
+    resetForNewPrincipal(ctx, l.identity);
     ctx.db.shopperLogin.identity.delete(l.identity);
     ctx.db.pushDevice.identity.delete(l.identity);
     const row = ctx.db.shopper.identity.find(l.identity);
@@ -1148,6 +1269,8 @@ function doDeleteAccount(ctx: Ctx, password: string): string {
   }
   for (const c of [...ctx.db.paymentCard.accountId.filter(acct.id)]) ctx.db.paymentCard.id.delete(c.id);
   for (const b of [...ctx.db.pairedBag.accountId.filter(acct.id)]) ctx.db.pairedBag.id.delete(b.id);
+  // Receipts stay with the store (shop_order); only the private link from them to this person is removed.
+  for (const o of [...ctx.db.orderOwner.accountId.filter(acct.id)]) ctx.db.orderOwner.orderId.delete(o.orderId);
   ctx.db.shopperAccount.id.delete(acct.id);
   return '';
 }
@@ -1205,14 +1328,23 @@ function ownBag(ctx: Ctx, id: bigint) {
   if (!b || b.accountId !== acct.id) throw new SenderError('That bag isn’t paired to your account.');
   return b;
 }
+// Trip history by durable ownership (order_owner), never by which phones are linked right now:
+// signed in = every order owned by the account, from any phone, including phones since signed out or switched;
+// guest = this phone's own guest orders. Orders without a known owner (before v5.2) are never listed.
 function tripsOf(ctx: Ctx, limit: number) {
-  const l = loginOf(ctx);
-  const who = l ? [...ctx.db.shopperLogin.accountId.filter(l.accountId)].map((x) => x.identity) : [ctx.sender];
-  if (l && !who.some((w) => w.toHexString() === ctx.sender.toHexString())) who.push(ctx.sender);
-  const orders: any[] = [];
-  for (const w of who) for (const o of ctx.db.shopOrder.shopper.filter(w)) orders.push(o);
-  orders.sort((a, b) => (a.id > b.id ? -1 : 1));
-  return orders.slice(0, Math.max(1, Math.min(limit || 50, 200))).map((o) => receiptOf(ctx, o));
+  const p = principalOf(ctx, ctx.sender);
+  const ids: bigint[] = [];
+  if (p) for (const o of ctx.db.orderOwner.accountId.filter(p)) ids.push(o.orderId);
+  else for (const o of ctx.db.orderOwner.identity.filter(ctx.sender)) if (o.accountId === 0n) ids.push(o.orderId);
+  ids.sort((a, b) => (a > b ? -1 : a < b ? 1 : 0));
+  const out: any[] = [];
+  const max = Math.max(1, Math.min(limit || 50, 200));
+  for (const id of ids) {
+    if (out.length >= max) break;
+    const o = ctx.db.shopOrder.id.find(id);
+    if (o) out.push(receiptOf(ctx, o));
+  }
+  return out;
 }
 
 // Sign-in failures must persist (attempt counting), so they are returned, not thrown, inside the transaction.
@@ -1294,10 +1426,10 @@ function pushesForAccount(ctx: Ctx, accountId: bigint, cat: string, title: strin
 }
 const money = (c: number) => '$' + (c / 100).toFixed(2);
 function tripPushes(ctx: Ctx, order: any): Push[] {
-  const l = loginOf(ctx);
-  if (!l) return [];
+  const ow = ctx.db.orderOwner.orderId.find(order.id);     // the order's owner, not whoever is signed in now
+  if (!ow || ow.accountId === 0n) return [];
   const due = order.status !== 'paid';
-  return pushesForAccount(ctx, l.accountId, 'trips',
+  return pushesForAccount(ctx, ow.accountId, 'trips',
     due ? 'Payment due at ' + order.storeName : 'Paid ' + money(order.totalCents) + ' at ' + order.storeName,
     due ? money(order.totalCents) + ' for ' + order.itemCount + (order.itemCount === 1 ? ' item' : ' items') + '. Add a card in Bag It to settle it.'
         : order.itemCount + (order.itemCount === 1 ? ' item' : ' items') + ' with ' + order.payment + '. Exit code ' + order.code + '.',
