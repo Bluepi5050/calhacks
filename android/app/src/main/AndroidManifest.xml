@@ -18,7 +18,8 @@
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
-        android:label="SmartBag"
+        android:label="Bag It"
+        android:enableOnBackInvokedCallback="true"
         android:theme="@style/Theme.SmartBag">
         <service
             android:name=".WatchService"

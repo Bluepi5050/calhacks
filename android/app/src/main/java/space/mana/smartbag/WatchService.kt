@@ -16,6 +16,7 @@ class WatchService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val shop = (application as SmartBagApp).shop
+        shop.watching = true
         val n = Notify.ongoing(this, shop.statusLine())
         try {
             if (Build.VERSION.SDK_INT >= 29) {
@@ -24,7 +25,12 @@ class WatchService : Service() {
                     type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
                 startForeground(Notify.ONGOING, n, type)
             } else startForeground(Notify.ONGOING, n)
+            shop.serviceRunning = true
         } catch (e: Exception) {
+            shop.watching = false
+            shop.serviceRunning = false
+            // Android refused a background restart: say so, because nothing will charge on walk-out until the app is opened.
+            Notify.status(this, "Bag It paused. Open the app to keep watching for your walk-out.")
             stopSelf(); return START_NOT_STICKY
         }
         shop.location.start()

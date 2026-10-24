@@ -14,8 +14,8 @@ android {
         applicationId = "space.mana.smartbag"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "3.0"
+        versionCode = 4
+        versionName = "3.1"
         buildConfigField("String", "STDB_HOST", "\"$stdbHost\"")
         buildConfigField("String", "STDB_DB", "\"$stdbDb\"")
     }
@@ -34,6 +34,16 @@ android {
     composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
     packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
     lint { abortOnError = false; checkReleaseBuilds = false }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            all {
+                it.systemProperty("roborazzi.test.record", "true")
+                it.systemProperty("shots.dir", (project.findProperty("shotsDir") as String?) ?: "/tmp/smartbag-shots")
+                it.maxHeapSize = "3g"
+            }
+        }
+    }
 }
 
 dependencies {
@@ -49,4 +59,10 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
+    // Screenshot tests: Robolectric native graphics + Roborazzi render real Compose pixels without an emulator.
+    testImplementation("org.robolectric:robolectric:4.13")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.22.0")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.22.0")
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

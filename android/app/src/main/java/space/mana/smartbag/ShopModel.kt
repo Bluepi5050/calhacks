@@ -10,6 +10,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -26,6 +27,8 @@ sealed class StoreState {
  * The database is the source of truth: every call returns the shopper's full priced bag, and
  * payment happens in the database the moment a location fix shows the shopper has left the store.
  */
+const val DEMO_CARD = "Demo Visa •••• 4242"
+
 class ShopModel(private val app: Application) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val prefs = app.getSharedPreferences("smartbag", 0)
@@ -36,9 +39,15 @@ class ShopModel(private val app: Application) {
     var total by mutableStateOf(0); private set
     var count by mutableStateOf(0); private set
     var paid by mutableStateOf<Receipt?>(null); private set          // receipt to show after a walk-out
+    var lastTrip by mutableStateOf<Receipt?>(null); private set      // most recent receipt, reopenable from the shop screen
     var flash by mutableStateOf<Pair<String, Int>?>(null); private set
     var syncError by mutableStateOf<String?>(null); private set
     val lines = mutableStateListOf<Line>()
+
+    var watching = true                    // false if Android refused to keep the foreground service running
+    var serviceRunning = false             // the ongoing notification belongs to WatchService; never post it before that
+    private var settingCard = false
+    private val foreground get() = (app as SmartBagApp).foreground   // app on screen: receipt shows in-app, no heads-up
 
     private var fix: Location? = null
     private var sentAt: Location? = null
@@ -60,41 +69,55 @@ class ShopModel(private val app: Application) {
         scope.launch {
             for (op in ops) {
                 try { op(); syncError = null } catch (e: Exception) {
-                    syncError = e.message ?: "Couldn't reach SmartBag."
+                    syncError = e.message ?: "Couldn't reach Bag It."
                     if (store is StoreState.Locating) store = StoreState.Offline(syncError!!)
                 }
             }
         }
-        ops.trySend {
-            var s = Api.current()
-            if (s.payment.isEmpty()) s = Api.setPayment("Demo Visa •••• 4242")   // demo: no real card is stored
-            apply(s, fromLocation = false)
-        }
+        bootstrap()
     }
+
+    /** First call: read the shopper and give them the demo card. Rerun by Try again if it failed (offline at launch). */
+    private fun bootstrap() = ops.trySend {
+        var s = Api.current()
+        if (s.payment.isEmpty()) s = Api.setPayment(DEMO_CARD)   // demo: no real card is stored
+        apply(s, fromLocation = false)
+    }
+
+    /** Try again: re-read the bag (and redo the first-run setup if it never landed), then re-check the store. */
+    fun retry() { bootstrap(); refreshStore() }
 
     private fun apply(s: CartState, fromLocation: Boolean) {
         payment = s.payment
         store = when {
             s.storeId.isNotEmpty() -> StoreState.InStore(s.storeId, s.storeName, s.storeAddress, s.leaving)
+            // Try again after being offline, with no location result yet: keep looking rather than claim "not in a store".
+            !fromLocation && store is StoreState.Offline -> StoreState.Locating
             fromLocation || store !is StoreState.Locating -> StoreState.Away(s.nearestName.ifEmpty { null }, if (s.nearestName.isEmpty()) null else s.nearestM)
             else -> store
         }
-        lines.clear(); lines.addAll(s.lines.sortedBy { it.addedMicros })
+        lines.clear(); lines.addAll(s.lines.sortedByDescending { it.addedMicros })   // newest first: the item you just dropped in is on top
         total = s.totalCents; count = s.itemCount
         val r = s.lastReceipt
+        lastTrip = r
         val seen = prefs.getLong("seen_order", -1L)
         if (r != null && seen >= 0 && r.id > seen) {           // the database just charged a walk-out
             paid = r
             link.send("PAID ${r.code}")
-            Notify.paid(app, r)
+            if (!foreground) Notify.paid(app, r)
         }
         if (r != null && r.id > seen || seen < 0) prefs.edit().putLong("seen_order", r?.id ?: 0L).apply()
-        Notify.status(app, statusLine())
+        if (serviceRunning || !watching) Notify.status(app, statusLine())
+        // First-run setup failed earlier (offline at launch): give the shopper the demo card as soon as calls work again.
+        if (s.payment.isEmpty() && !settingCard) {
+            settingCard = true
+            ops.trySend { try { apply(Api.setPayment(DEMO_CARD), false) } finally { settingCard = false } }
+        }
     }
 
-    fun statusLine(): String = when (val s = store) {
-        is StoreState.InStore -> if (s.leaving) "Leaving ${s.name}…" else if (count > 0) "${s.name} · ${money(total)} in your bag · just walk out" else "Shopping at ${s.name}"
-        is StoreState.Away -> "Not in a SmartBag store"
+    fun statusLine(): String = if (!watching) "Bag It paused. Open the app to keep watching for your walk-out." else when (val s = store) {
+        is StoreState.InStore -> if (s.leaving) "Leaving ${s.name}…" else if (count > 0) "${money(total)} in your bag at ${s.name}. Just walk out." else "Shopping at ${s.name}"
+        is StoreState.Away -> "Not in a Bag It store"
         else -> "Watching your bag"
     }
 
@@ -131,11 +154,17 @@ class ShopModel(private val app: Application) {
     private fun onLine(raw: String) {
         val ev = Protocol.parse(raw)
         ops.trySend {
+            val before = if (ev != null) lines.firstOrNull { it.sku == ev.sku }?.qty ?: 0 else 0
             apply(Api.bagLine(raw), false)
             if (ev != null) {
                 val l = lines.firstOrNull { it.sku == ev.sku }
                 if (ev.op == "add") {
-                    flash = ev.sku to ++flashN
+                    // The coral flash means money moved: only when a priced item's quantity actually went up.
+                    if (l != null && l.sold && l.qty > before) {
+                        val n = ++flashN
+                        flash = ev.sku to n
+                        scope.launch { delay(1600); if (flash?.second == n) flash = null }
+                    }
                     link.send(if (l != null && l.sold) "OK +${ev.sku} " + String.format(Locale.US, "%.2f", l.priceCents / 100.0) else "ERR ${ev.sku} unknown")
                 } else link.send("OK -${ev.sku}")
             }
@@ -155,7 +184,8 @@ class ShopModel(private val app: Application) {
         val l = fix ?: return
         ignoreFixesUntil = System.currentTimeMillis() + 60_000
         val lat = l.latitude + 300.0 / 111_320.0
-        ops.trySend { apply(Api.locate(lat, l.longitude, 8f), true) }
+        // Pause between the two fixes so the "Leaving" beat is visible, as it would be on a real walk out the door.
+        ops.trySend { apply(Api.locate(lat, l.longitude, 8f), true); delay(1800) }
         ops.trySend { apply(Api.locate(lat + 0.0002, l.longitude, 8f), true) }
     }
 

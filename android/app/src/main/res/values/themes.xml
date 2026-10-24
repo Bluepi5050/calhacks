@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Edge to edge: Compose draws behind the bars (enableEdgeToEdge); the window background avoids a flash on launch. -->
     <style name="Theme.SmartBag" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/bg</item>
-        <item name="android:statusBarColor">@color/bg</item>
-        <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>
