@@ -1,5 +1,6 @@
 import { schema, table, t, SenderError, type InferSchema, type ReducerCtx } from 'spacetimedb/server';
 import { ScheduleAt } from 'spacetimedb';
+import { sha256, googleJwt } from './push_crypto';
 
 // SmartBag v3: built to scale to thousands of stores and shoppers.
 // - Store lookup is a spatial grid index (0.01° cells), so a GPS fix touches only nearby stores.
@@ -204,10 +205,21 @@ const pairedBag = table({ name: 'paired_bag' }, {
   pairedAt: t.timestamp(),
 });
 
+// Push (v5.1): phones register a Firebase Cloud Messaging token; the module itself sends pushes over HTTPS from
+// procedures (OAuth service-account JWT signed in push_crypto.ts). Private. prefs = enabled categories.
+const pushDevice = table({ name: 'push_device' }, {
+  identity: t.identity().primaryKey(),
+  accountId: t.u64().index('btree'),      // 0 = not signed in
+  platform: t.string(),                   // 'android' | 'ios'
+  token: t.string(),
+  prefs: t.string(),                      // comma list of: trips, security
+  updatedAt: t.timestamp(),
+});
+
 const spacetimedb = schema({
   store, product, shopper, cartItem, shopOrder, orderLine, bagEvent, operator, config, storeStaff, storeInvite, cleanupTimer,
   account, profile, staffEmailInvite, activity, storeOwner, memberName,
-  shopperAccount, shopperLogin, paymentCard, pairedBag,
+  shopperAccount, shopperLogin, paymentCard, pairedBag, pushDevice,
 });
 export default spacetimedb;
 
@@ -554,8 +566,18 @@ function cartState(ctx: Ctx) {
 // ───────────────────────── Phone API: procedures (one round trip, returns the fresh priced cart) ─────────────────────────
 
 export const shopState = spacetimedb.procedure(CartState, ctx => ctx.withTx(tx => cartState(tx)));
-export const shopLocate = spacetimedb.procedure({ lat: t.f64(), lng: t.f64(), accuracyM: t.f64() }, CartState,
-  (ctx, a) => ctx.withTx(tx => { doLocate(tx, a.lat, a.lng, a.accuracyM); return cartState(tx); }));
+export const shopLocate = spacetimedb.procedure({ lat: t.f64(), lng: t.f64(), accuracyM: t.f64() }, CartState, (ctx, a) => {
+  const r = ctx.withTx(tx => {
+    let before = 0n;
+    for (const o of tx.db.shopOrder.shopper.filter(tx.sender)) if (o.id > before) before = o.id;
+    doLocate(tx, a.lat, a.lng, a.accuracyM);
+    const state = cartState(tx);
+    const order = state.lastReceipt.orderId > before ? tx.db.shopOrder.id.find(state.lastReceipt.orderId) : null;
+    return { state, pushes: order ? tripPushes(tx, order) : [] };
+  });
+  if (r.pushes.length) { try { sendPushes(ctx, r.pushes); } catch (_e) { /* a push problem never fails the walk-out */ } }
+  return r.state;
+});
 export const shopBagLine = spacetimedb.procedure({ line: t.string() }, CartState,
   (ctx, { line }) => ctx.withTx(tx => { doBagLine(tx, line); return cartState(tx); }));
 export const shopSetBag = spacetimedb.procedure({ name: t.string() }, CartState,
@@ -971,39 +993,6 @@ export const declineInvite = spacetimedb.reducer({ id: t.u64() }, (ctx, { id }) 
 // ───────────────────────── Shopper accounts, wallet, bags, trips (v5) ─────────────────────────
 
 // SHA-256 / HMAC / PBKDF2 in plain TypeScript (modules have no crypto library).
-const K256 = new Uint32Array([0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]);
-function sha256(msg: Uint8Array): Uint8Array {
-  const h = new Uint32Array([0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19]);
-  const l = msg.length, nBlocks = ((l + 9 + 63) >> 6);
-  const buf = new Uint8Array(nBlocks * 64); buf.set(msg); buf[l] = 0x80;
-  const bits = l * 8; const dv = new DataView(buf.buffer);
-  dv.setUint32(buf.length - 4, bits >>> 0); dv.setUint32(buf.length - 8, Math.floor(bits / 0x100000000));
-  const w = new Uint32Array(64);
-  for (let b = 0; b < nBlocks; b++) {
-    for (let i = 0; i < 16; i++) w[i] = dv.getUint32(b * 64 + i * 4);
-    for (let i = 16; i < 64; i++) {
-      const x = w[i - 15], y = w[i - 2];
-      const s0 = ((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3);
-      const s1 = ((y >>> 17) | (y << 15)) ^ ((y >>> 19) | (y << 13)) ^ (y >>> 10);
-      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
-    }
-    let a = h[0], bb = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
-    for (let i = 0; i < 64; i++) {
-      const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
-      const ch = (e & f) ^ (~e & g);
-      const t1 = (hh + S1 + ch + K256[i] + w[i]) >>> 0;
-      const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
-      const mj = (a & bb) ^ (a & c) ^ (bb & c);
-      const t2 = (S0 + mj) >>> 0;
-      hh = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = bb; bb = a; a = (t1 + t2) >>> 0;
-    }
-    h[0] = (h[0] + a) >>> 0; h[1] = (h[1] + bb) >>> 0; h[2] = (h[2] + c) >>> 0; h[3] = (h[3] + d) >>> 0;
-    h[4] = (h[4] + e) >>> 0; h[5] = (h[5] + f) >>> 0; h[6] = (h[6] + g) >>> 0; h[7] = (h[7] + hh) >>> 0;
-  }
-  const out = new Uint8Array(32); const ov = new DataView(out.buffer);
-  for (let i = 0; i < 8; i++) ov.setUint32(i * 4, h[i]);
-  return out;
-}
 const utf8 = (x: string) => new TextEncoder().encode(x);
 const toHex = (b: Uint8Array) => Array.from(b).map((x) => x.toString(16).padStart(2, '0')).join('');
 function hmacSha256(key: Uint8Array, msg: Uint8Array): Uint8Array {
@@ -1068,9 +1057,12 @@ function linkLogin(ctx: Ctx, acct: { id: bigint; name: string }) {
   else ctx.db.shopperLogin.insert({ identity: ctx.sender, accountId: acct.id, signedInAt: ctx.timestamp });
   setShopperName(ctx, acct.name);
   syncPayment(ctx, acct.id);
+  const pd = ctx.db.pushDevice.identity.find(ctx.sender);
+  if (pd && pd.accountId !== acct.id) ctx.db.pushDevice.identity.update({ ...pd, accountId: acct.id });
 }
 function unlinkLogin(ctx: Ctx) {
   ctx.db.shopperLogin.identity.delete(ctx.sender);
+  ctx.db.pushDevice.identity.delete(ctx.sender);   // a signed-out phone gets no account pushes
   const row = ctx.db.shopper.identity.find(ctx.sender);
   if (row) ctx.db.shopper.identity.update({ ...row, payment: '', bag: '', updatedAt: ctx.timestamp });
   if (!ctx.db.account.identity.find(ctx.sender)) ctx.db.memberName.identity.delete(ctx.sender);
@@ -1149,6 +1141,7 @@ function doDeleteAccount(ctx: Ctx, password: string): string {
   const logins = [...ctx.db.shopperLogin.accountId.filter(acct.id)];
   for (const l of logins) {
     ctx.db.shopperLogin.identity.delete(l.identity);
+    ctx.db.pushDevice.identity.delete(l.identity);
     const row = ctx.db.shopper.identity.find(l.identity);
     if (row) ctx.db.shopper.identity.update({ ...row, payment: '', bag: '' });
     if (!ctx.db.account.identity.find(l.identity)) ctx.db.memberName.identity.delete(l.identity);
@@ -1231,7 +1224,13 @@ export const accountSignUp = spacetimedb.procedure({ name: t.string(), email: t.
 export const accountSignIn = spacetimedb.procedure({ email: t.string(), password: t.string() }, AccountState, (ctx, a) => {
   const msg = ctx.withTx((tx) => signInAttempt(tx, a.email, a.password));
   orThrow(msg);
-  return ctx.withTx((tx) => acctState(tx));
+  const r = ctx.withTx((tx) => {
+    const l = loginOf(tx);
+    const pushes = l ? pushesForAccount(tx, l.accountId, 'security', 'New sign-in to Bag It', 'Your account was just used to log in on another phone. If that wasn’t you, sign out of it from Account and change nothing else until you’ve checked your wallet.', { type: 'sign_in' }) : [];
+    return { state: acctState(tx), pushes };
+  });
+  if (r.pushes.length) { try { sendPushes(ctx, r.pushes); } catch (_e) {} }
+  return r.state;
 });
 export const accountSignOut = spacetimedb.procedure(AccountState, (ctx) => ctx.withTx((tx) => { unlinkLogin(tx); return acctState(tx); }));
 export const accountSetName = spacetimedb.procedure({ name: t.string() }, AccountState, (ctx, { name }) => ctx.withTx((tx) => {
@@ -1250,7 +1249,15 @@ export const accountDelete = spacetimedb.procedure({ password: t.string() }, Acc
 });
 export const cardAdd = spacetimedb.procedure(
   { brand: t.string(), last4: t.string(), expMonth: t.u32(), expYear: t.u32(), nickname: t.string(), makeDefault: t.bool() }, AccountState,
-  (ctx, a) => ctx.withTx((tx) => { doCardAdd(tx, a); return acctState(tx); }));
+  (ctx, a) => {
+    const r = ctx.withTx((tx) => {
+      doCardAdd(tx, a);
+      const l = loginOf(tx)!;
+      return { state: acctState(tx), pushes: pushesForAccount(tx, l.accountId, 'security', 'Card added', 'A ' + a.brand + ' ending ' + a.last4 + ' was added to your Bag It wallet on another phone.', { type: 'card_added' }) };
+    });
+    if (r.pushes.length) { try { sendPushes(ctx, r.pushes); } catch (_e) {} }
+    return r.state;
+  });
 export const cardRemove = spacetimedb.procedure({ id: t.u64() }, AccountState, (ctx, { id }) => ctx.withTx((tx) => { doCardRemove(tx, id); return acctState(tx); }));
 export const cardSetDefault = spacetimedb.procedure({ id: t.u64() }, AccountState, (ctx, { id }) => ctx.withTx((tx) => { doCardDefault(tx, id); return acctState(tx); }));
 export const bagPair = spacetimedb.procedure({ bagId: t.string(), name: t.string() }, AccountState,
@@ -1262,3 +1269,147 @@ export const bagUnpair = spacetimedb.procedure({ id: t.u64() }, AccountState, (c
   const b = ownBag(tx, id); tx.db.pairedBag.id.delete(b.id); return acctState(tx);
 }));
 export const shopTrips = spacetimedb.procedure({ limit: t.u32() }, t.array(Receipt), (ctx, { limit }) => ctx.withTx((tx) => tripsOf(tx, limit)));
+
+
+// ───────────────────────── Push notifications (v5.1) ─────────────────────────
+// Phones show their own local notifications for what they see happen (walk-out on this phone, arrivals, bag
+// alerts). The module pushes what a phone cannot see: a trip charged on another phone of the same account, a new
+// sign-in, a card added or removed elsewhere. Sending is a no-op until set_push_config stores an FCM service account.
+
+type Push = { token: string; identity: string; title: string; body: string; kind: string; data: Record<string, string> };
+const PUSH_CATS = ['trips', 'security'];
+function cfg(ctx: Ctx, key: string) { const c = ctx.db.config.key.find(key); return c ? c.value : ''; }
+function setCfg(ctx: Ctx, key: string, value: string) {
+  if (ctx.db.config.key.find(key)) ctx.db.config.key.update({ key, value }); else ctx.db.config.insert({ key, value });
+}
+function pushesForAccount(ctx: Ctx, accountId: bigint, cat: string, title: string, body: string, data: Record<string, string>, includeSender = false): Push[] {
+  if (!cfg(ctx, 'fcm_project_id')) return [];
+  const out: Push[] = [];
+  for (const d of ctx.db.pushDevice.accountId.filter(accountId)) {
+    if (!includeSender && d.identity.toHexString() === ctx.sender.toHexString()) continue;
+    if (!d.prefs.split(',').includes(cat)) continue;
+    out.push({ token: d.token, identity: d.identity.toHexString(), title, body, kind: cat, data });
+  }
+  return out;
+}
+const money = (c: number) => '$' + (c / 100).toFixed(2);
+function tripPushes(ctx: Ctx, order: any): Push[] {
+  const l = loginOf(ctx);
+  if (!l) return [];
+  const due = order.status !== 'paid';
+  return pushesForAccount(ctx, l.accountId, 'trips',
+    due ? 'Payment due at ' + order.storeName : 'Paid ' + money(order.totalCents) + ' at ' + order.storeName,
+    due ? money(order.totalCents) + ' for ' + order.itemCount + (order.itemCount === 1 ? ' item' : ' items') + '. Add a card in Bag It to settle it.'
+        : order.itemCount + (order.itemCount === 1 ? ' item' : ' items') + ' with ' + order.payment + '. Exit code ' + order.code + '.',
+    { type: due ? 'payment_due' : 'trip', code: order.code });
+}
+
+// HTTPS outside any transaction. Returns a short status for push_test.
+function sendPushes(ctx: any, pushes: Push[]): string {
+  if (!pushes.length) return 'nothing to send';
+  const conf = ctx.withTx((tx: Ctx) => ({
+    project: cfg(tx, 'fcm_project_id'), email: cfg(tx, 'fcm_client_email'), key: cfg(tx, 'fcm_private_key'),
+    tokenUri: cfg(tx, 'fcm_token_uri') || 'https://oauth2.googleapis.com/token',
+    access: cfg(tx, 'fcm_access_token'), exp: Number(cfg(tx, 'fcm_access_exp') || '0'),
+    now: Number(tx.timestamp.microsSinceUnixEpoch / 1_000_000n),
+  }));
+  if (!conf.project || !conf.key) return 'push not configured';
+  let access = conf.access;
+  if (!access || conf.exp < conf.now + 120) {
+    try {
+      const jwt = googleJwt(conf.email, conf.key, conf.tokenUri, conf.now);
+      const r = ctx.http.fetch(conf.tokenUri, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: 'grant_type=' + encodeURIComponent('urn:ietf:params:oauth:grant-type:jwt-bearer') + '&assertion=' + jwt });
+      const j = r.json();
+      if (!r.ok || !j.access_token) return 'oauth failed: ' + r.status + ' ' + String(j.error_description || j.error || '').slice(0, 120);
+      access = j.access_token;
+      const exp = String(conf.now + Number(j.expires_in || 3600));
+      ctx.withTx((tx: Ctx) => { setCfg(tx, 'fcm_access_token', access); setCfg(tx, 'fcm_access_exp', exp); });
+    } catch (e: any) { return 'oauth error: ' + String(e?.message || e).slice(0, 120); }
+  }
+  const dead: string[] = [];
+  let sent = 0, last = '';
+  for (const p of pushes) {
+    const msg = { message: {
+      token: p.token,
+      notification: { title: p.title, body: p.body },
+      data: { kind: p.kind, ...p.data },
+      android: { priority: 'HIGH', notification: { channel_id: p.kind === 'security' ? 'account' : 'receipts' } },
+      apns: { payload: { aps: { sound: 'default', 'thread-id': p.kind } } },
+    } };
+    try {
+      const r = ctx.http.fetch('https://fcm.googleapis.com/v1/projects/' + conf.project + '/messages:send', {
+        method: 'POST', headers: { authorization: 'Bearer ' + access, 'content-type': 'application/json' }, body: JSON.stringify(msg) });
+      if (r.ok) sent++;
+      else {
+        const txt = r.text(); last = r.status + ' ' + txt.slice(0, 160);
+        if (r.status === 404 || txt.includes('UNREGISTERED') || (r.status === 400 && txt.includes('registration token'))) dead.push(p.identity);
+        if (r.status === 401) ctx.withTx((tx: Ctx) => setCfg(tx, 'fcm_access_exp', '0'));
+      }
+    } catch (e: any) { last = String(e?.message || e).slice(0, 120); }
+  }
+  if (dead.length) ctx.withTx((tx: Ctx) => {
+    for (const d of [...tx.db.pushDevice.iter()]) if (dead.includes(d.identity.toHexString())) tx.db.pushDevice.identity.delete(d.identity);
+  });
+  return 'sent ' + sent + '/' + pushes.length + (last ? ' (last error ' + last + ')' : '');
+}
+
+const PushState = t.object('PushState', { serverPush: t.bool(), registered: t.bool(), prefs: t.string() });
+function pushState(ctx: Ctx) {
+  const d = ctx.db.pushDevice.identity.find(ctx.sender);
+  return { serverPush: !!cfg(ctx, 'fcm_project_id'), registered: !!d, prefs: d ? d.prefs : '' };
+}
+function cleanPrefs(p: string) { return p.split(',').map((x) => x.trim()).filter((x) => PUSH_CATS.includes(x)).join(','); }
+
+// A phone registers (or refreshes) its FCM token. Only signed-in phones get account pushes.
+export const pushRegister = spacetimedb.procedure({ platform: t.string(), token: t.string(), prefs: t.string() }, PushState, (ctx, a) => ctx.withTx((tx) => {
+  const acct = requireLogin(tx);
+  const platform = a.platform === 'ios' ? 'ios' : 'android';
+  const token = a.token.trim();
+  if (token.length < 20 || token.length > 4096) throw new SenderError('That notification token isn’t valid.');
+  for (const d of [...tx.db.pushDevice.iter()]) if (d.token === token && d.identity.toHexString() !== tx.sender.toHexString()) tx.db.pushDevice.identity.delete(d.identity);
+  const row = { identity: tx.sender, accountId: acct.id, platform, token, prefs: cleanPrefs(a.prefs), updatedAt: tx.timestamp };
+  if (tx.db.pushDevice.identity.find(tx.sender)) tx.db.pushDevice.identity.update(row); else tx.db.pushDevice.insert(row);
+  return pushState(tx);
+}));
+export const pushSetPrefs = spacetimedb.procedure({ prefs: t.string() }, PushState, (ctx, { prefs }) => ctx.withTx((tx) => {
+  const d = tx.db.pushDevice.identity.find(tx.sender);
+  if (d) tx.db.pushDevice.identity.update({ ...d, prefs: cleanPrefs(prefs), updatedAt: tx.timestamp });
+  return pushState(tx);
+}));
+export const pushUnregister = spacetimedb.procedure(PushState, (ctx) => ctx.withTx((tx) => { tx.db.pushDevice.identity.delete(tx.sender); return pushState(tx); }));
+export const pushStatus = spacetimedb.procedure(PushState, (ctx) => ctx.withTx((tx) => pushState(tx)));
+// Sends a test notification to this phone. Returns what happened (e.g. 'sent 1/1', 'push not configured').
+export const pushTest = spacetimedb.procedure(t.string(), (ctx) => {
+  const pushes = ctx.withTx((tx) => {
+    const d = tx.db.pushDevice.identity.find(tx.sender);
+    if (!d) return [] as Push[];
+    return [{ token: d.token, identity: d.identity.toHexString(), title: 'Notifications are on', body: 'Bag It will tell you when a trip is charged, even with the app closed.', kind: 'trips', data: { type: 'test' } }];
+  });
+  if (!pushes.length) return 'not registered';
+  return sendPushes(ctx, pushes);
+});
+// Admin: store the FCM service account (JSON from Firebase console › Project settings › Service accounts). '' turns push off.
+export const setPushConfig = spacetimedb.reducer({ serviceAccountJson: t.string() }, (ctx, { serviceAccountJson }) => {
+  requireAdmin(ctx);
+  if (!serviceAccountJson.trim()) { for (const k of ['fcm_project_id', 'fcm_client_email', 'fcm_private_key', 'fcm_token_uri', 'fcm_access_token', 'fcm_access_exp']) setCfg(ctx, k, ''); return; }
+  let j: any;
+  try { j = JSON.parse(serviceAccountJson); } catch { throw new SenderError('That isn’t valid JSON.'); }
+  if (!j.project_id || !j.client_email || !j.private_key) throw new SenderError('Expected a Firebase service account JSON (project_id, client_email, private_key).');
+  setCfg(ctx, 'fcm_project_id', String(j.project_id)); setCfg(ctx, 'fcm_client_email', String(j.client_email));
+  setCfg(ctx, 'fcm_private_key', String(j.private_key)); setCfg(ctx, 'fcm_token_uri', String(j.token_uri || 'https://oauth2.googleapis.com/token'));
+  setCfg(ctx, 'fcm_access_token', ''); setCfg(ctx, 'fcm_access_exp', '0');
+});
+
+
+// Nearby stores for background geofencing on phones (iOS region monitoring allows 20 regions; Android geofences 100).
+const NearbyStore = t.object('NearbyStore', { id: t.string(), name: t.string(), address: t.string(), lat: t.f64(), lng: t.f64(), radiusM: t.u32(), distanceM: t.u32() });
+export const shopNearbyStores = spacetimedb.procedure({ lat: t.f64(), lng: t.f64(), limit: t.u32() }, t.array(NearbyStore), (ctx, a) => ctx.withTx((tx) => {
+  const ci = Math.floor(a.lat * CELL), cj = Math.floor(a.lng * CELL);
+  const out: any[] = [];
+  for (let di = -5; di <= 5; di++) for (let dj = -5; dj <= 5; dj++)
+    for (const s of tx.db.store.cell.filter(cellKey(ci + di, cj + dj)))
+      out.push({ id: s.id, name: s.name, address: s.address, lat: s.lat, lng: s.lng, radiusM: s.radiusM, distanceM: Math.round(haversine(a.lat, a.lng, s.lat, s.lng)) });
+  out.sort((x, y) => x.distanceM - y.distanceM);
+  return out.slice(0, Math.max(1, Math.min(a.limit || 20, 50)));
+}));
