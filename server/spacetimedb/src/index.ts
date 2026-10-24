@@ -1431,7 +1431,7 @@ function tripPushes(ctx: Ctx, order: any): Push[] {
   const due = order.status !== 'paid';
   return pushesForAccount(ctx, ow.accountId, 'trips',
     due ? 'Payment due at ' + order.storeName : 'Paid ' + money(order.totalCents) + ' at ' + order.storeName,
-    due ? money(order.totalCents) + ' for ' + order.itemCount + (order.itemCount === 1 ? ' item' : ' items') + '. Add a card in Bag It to settle it.'
+    due ? money(order.totalCents) + ' for ' + order.itemCount + (order.itemCount === 1 ? ' item' : ' items') + '. Show exit code ' + order.code + ' to store staff.'
         : order.itemCount + (order.itemCount === 1 ? ' item' : ' items') + ' with ' + order.payment + '. Exit code ' + order.code + '.',
     { type: due ? 'payment_due' : 'trip', code: order.code });
 }
