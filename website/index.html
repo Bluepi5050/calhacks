@@ -4,112 +4,89 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Bag It: the bag that checks you out</title>
-<meta name="description" content="Bag It is a smart grocery bag. Drop items in, walk out of the store, and the receipt lands on your phone. A prototype built at Cal Hacks 13.0.">
+<meta name="description" content="Bag It is a smart grocery bag. Drop your groceries in, walk out of the store, and your receipt arrives on your phone. No lines, no scanning.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#FAFAFA" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0B0B0C" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="brand/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="brand/favicon-32.png" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="brand/apple-touch-icon.png">
+<link rel="canonical" href="https://bagitwith.us/">
 <meta property="og:type" content="website">
+<meta property="og:site_name" content="Bag It">
 <meta property="og:url" content="https://bagitwith.us/">
 <meta property="og:title" content="Bag It: the bag that checks you out">
-<meta property="og:description" content="Drop it in. Walk out. Your receipt lands on your phone. A smart-bag prototype from Cal Hacks 13.0.">
-<meta property="og:image" content="https://bagitwith.us/brand/og-image.png">
+<meta property="og:description" content="Drop it in. Walk out. Your receipt arrives on your phone.">
+<meta property="og:image" content="https://bagitwith.us/brand/og-image.jpg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="Bag It: the bag that checks you out. The logo beside an illustration of the smart bag.">
-<meta property="og:site_name" content="Bag It">
-<link rel="canonical" href="https://bagitwith.us/">
+<meta property="og:image:alt" content="Bag It: the bag that checks you out. The logo beside the Bag It bag.">
 <meta name="twitter:card" content="summary_large_image">
 <style>
-:root{color-scheme:light dark;--bg:#FAFAFA;--bg2:#F4F4F5;--ink:#18181B;--ink2:#3F3F46;--muted:#52525B;--faint:#6B6B73;--line:#E4E4E7;--line2:#8E8E96;--acc:#E8654A;--acc-ink:#B5432B;--btn:#18181B;--btn-ink:#FAFAFA;
---fab:#ECEAE6;--fab-ink:#2A2A2E;--rim:#E2DFD9;--strap:#E6E3DE;--module:#1F1F23;--lens:#4A4A52;--stitch:#B9B5AD;--deboss:#E3E0DA;--item:#FFFFFF;--shadow:rgba(24,24,27,.10);
+:root{color-scheme:light dark;--bg:#FAFAFA;--bg2:#F4F4F5;--ink:#18181B;--ink2:#3F3F46;--muted:#52525B;--faint:#6B6B73;--line:#E4E4E7;--line2:#8E8E96;--acc:#E8654A;--btn:#18181B;--btn-ink:#FAFAFA;
 --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;--wrap:1120px;--pad:clamp(20px,5vw,48px)}
-@media (prefers-color-scheme:dark){:root{--bg:#0B0B0C;--bg2:#131315;--ink:#F4F4F5;--ink2:#D4D4D8;--muted:#A1A1AA;--faint:#8E8E96;--line:#232326;--line2:#71717A;--acc-ink:#F2876F;--btn:#F4F4F5;--btn-ink:#0B0B0C;
---fab:#2A2A2E;--fab-ink:#8E8E96;--rim:#34343A;--strap:#323237;--module:#0E0E10;--lens:#52525B;--stitch:#45454C;--deboss:#323237;--mod-stroke:#52525B;--item:#2E2E33;--shadow:rgba(0,0,0,.6)}}
+@media (prefers-color-scheme:dark){:root{--bg:#0B0B0C;--bg2:#131315;--ink:#F4F4F5;--ink2:#D4D4D8;--muted:#A1A1AA;--faint:#8E8E96;--line:#232326;--line2:#71717A;--btn:#F4F4F5;--btn-ink:#0B0B0C}}
 *,*::before,*::after{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%;text-size-adjust:100%;scroll-behavior:smooth}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 var(--sans);-webkit-font-smoothing:antialiased}
-svg{display:block}
+svg,video,img{display:block}
 a{color:inherit}
 h1,h2,h3{text-wrap:balance;margin:0;font-weight:600;letter-spacing:-.022em;line-height:1.08}
 p{margin:0;text-wrap:pretty}
 :focus-visible{outline:2px solid var(--ink);outline-offset:3px;border-radius:8px}
 .wrap{max-width:var(--wrap);margin:0 auto;padding:0 var(--pad)}
-.skip{position:absolute;left:-9999px;top:10px;z-index:30;background:var(--btn);color:var(--btn-ink);padding:8px 14px;border-radius:999px;text-decoration:none}
+.skip{position:absolute;left:-9999px;top:10px;z-index:30;background:var(--btn);color:var(--btn-ink);padding:12px 16px;border-radius:999px;text-decoration:none}
 .skip:focus{left:12px}
 .label{font:500 12.5px/1.3 var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--faint)}
-header{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 86%,transparent);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-bottom:1px solid transparent;transition:border-color .2s}
+header{position:sticky;top:0;z-index:20;background:var(--bg);border-bottom:1px solid transparent;transition:border-color .2s}
 header.scrolled{border-bottom-color:var(--line)}
 .bar{display:flex;align-items:center;gap:28px;height:60px}
-.logo{display:flex;color:var(--ink);margin-right:auto;border-radius:6px}
+.logo{display:flex;align-items:center;min-height:44px;color:var(--ink);margin-right:auto;border-radius:6px}
 .logo svg{height:26px;width:auto}
-nav.top a{font-size:14px;color:var(--muted);text-decoration:none}
-nav.top a:hover{color:var(--ink)}
+header .logo svg{transform:translateY(3px)}
 nav.top{display:flex;gap:26px}
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;height:48px;padding:0 24px;border-radius:999px;font:600 15px/1 var(--sans);text-decoration:none;white-space:nowrap;border:1px solid transparent;transition:opacity .15s,background-color .15s,border-color .15s}
+nav.top a{font-size:14px;color:var(--muted);text-decoration:none;display:inline-flex;align-items:center;min-height:44px;transition:color .2s ease-out}
+nav.top a:hover{color:var(--ink)}
+@media (max-width:719px){nav.top{display:none}}
+.btn{cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:9px;height:48px;padding:0 24px;border-radius:999px;font:600 15px/1 var(--sans);text-decoration:none;white-space:nowrap;border:1px solid transparent;transition:opacity .2s ease-out,border-color .2s ease-out}
 .btn svg{width:17px;height:17px}
 .btn-1{background:var(--btn);color:var(--btn-ink)}
 .btn-1:hover{opacity:.86}
 .btn-2{border-color:var(--line2);color:var(--ink)}
 .btn-2:hover{border-color:var(--muted)}
-.btn-s{height:36px;padding:0 16px;font-size:13.5px}
-@media (max-width:719px){nav.top{display:none}}
+.btn-s{height:44px;padding:0 18px;font-size:14px}
 main section{scroll-margin-top:64px}
-.hero{text-align:center;padding:clamp(40px,7vw,88px) 0 0}
-.hero .label{color:var(--faint)}
-.hero h1{font-size:clamp(44px,7.4vw,88px);margin:18px auto 0;max-width:12ch}
-.hero .lede{font-size:clamp(17px,1.9vw,21px);color:var(--muted);max-width:30em;margin:20px auto 0;line-height:1.5}
-.cta{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-top:32px}
-.stage{margin:clamp(24px,4vw,48px) auto 0;max-width:560px;padding:0 12px}
-.bag{width:100%;height:auto}
-.bag .s-shadow{fill:var(--shadow)}
-.bag .s-strap-o{fill:none;stroke:var(--fab-ink);stroke-width:19}
-.bag .s-strap{fill:none;stroke:var(--strap);stroke-width:15}
-.bag .s-body{fill:var(--fab);stroke:var(--fab-ink);stroke-width:1.5;stroke-linejoin:round}
-.bag .s-rim{fill:var(--rim)}
-.bag .s-stitch{fill:none;stroke:var(--stitch);stroke-width:1.6;stroke-dasharray:5 6}
-.bag .s-cam circle{fill:var(--module)}
-.bag .s-lens circle{fill:var(--lens)}
-.bag .s-module{fill:var(--module);stroke:var(--mod-stroke,transparent);stroke-width:1.5}.bag .s-seam{fill:none;stroke:var(--lens);stroke-width:1}
-.bag .s-led{fill:var(--acc)}
-.bag .s-deboss{color:var(--deboss)}
-.bag .s-item{fill:var(--item);stroke:var(--fab-ink);stroke-width:2;stroke-linejoin:round}
-.bag .s-item-l{fill:none;stroke:var(--fab-ink);stroke-width:2;stroke-linecap:round}
-.item{opacity:0}
-.item-a{opacity:1;transform:translateY(64px)}
-@media (prefers-reduced-motion:no-preference){
-.item-a{opacity:0;animation:dropRest 1.6s 1.7s both}
-.item-b{animation:dropOut 1.5s .35s both}
-@keyframes dropOut{0%{opacity:0;transform:translateY(-60px);animation-timing-function:cubic-bezier(.45,0,.9,.55)}12%{opacity:1}92%{opacity:1;transform:translateY(230px)}100%{opacity:0;transform:translateY(230px)}}
-@keyframes dropRest{0%{opacity:0;transform:translateY(-60px);animation-timing-function:cubic-bezier(.45,0,.9,.55)}12%{opacity:1}80%{opacity:1;transform:translateY(70px);animation-timing-function:ease-out}100%{opacity:1;transform:translateY(64px)}}
-}
-.sec{padding:clamp(72px,10vw,128px) 0}
-.sec+.sec{border-top:1px solid var(--line)}
+.hero{text-align:center;padding:clamp(32px,5vw,64px) 0 clamp(56px,8vw,104px)}
+.hero h1{font-size:clamp(42px,6.2vw,72px);margin:16px auto 0;max-width:13ch}
+.lede{font-size:clamp(17px,1.9vw,21px);color:var(--muted);max-width:31em;margin:20px auto 0;line-height:1.5}
+.cta{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-top:30px}
+.fine{font-size:14px;color:var(--faint);margin-top:14px}
+.film{position:relative;margin:clamp(36px,5vw,64px) auto 0;max-width:1120px;border-radius:clamp(14px,2vw,24px);overflow:hidden;background:var(--bg2);aspect-ratio:16/9}
+.film video{width:100%;height:100%;object-fit:cover}
+.vctl{position:absolute;right:14px;bottom:14px;width:44px;height:44px;border-radius:999px;border:0;background:rgba(24,24,27,.74);color:#FAFAFA;box-shadow:0 0 0 1px rgba(255,255,255,.28);display:flex;align-items:center;justify-content:center;cursor:pointer}
+.vctl svg{width:16px;height:16px}
+.vctl[hidden]{display:none}
+figcaption{font-size:14px;color:var(--faint);margin-top:12px;text-align:center}
+.sec{padding:clamp(72px,10vw,128px) 0;border-top:1px solid var(--line)}
 .head{max-width:40em;margin-bottom:clamp(36px,5vw,56px)}
 .head h2{font-size:clamp(32px,4.6vw,52px);margin-top:12px}
 .head p:not(.label){color:var(--muted);font-size:18px;margin-top:14px}
-.beats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(28px,4vw,56px);list-style:none;margin:0;padding:0}
-.beats li{border-top:1px solid var(--ink);padding-top:22px}
-.beats .n{font:500 12.5px/1 var(--mono);color:var(--faint);letter-spacing:.08em}
-.beats h3{font-size:24px;margin:10px 0 10px}
-.beats p{color:var(--muted)}
-@media (max-width:899px){.beats{grid-template-columns:1fr;gap:0}.beats li{padding-bottom:28px}}
-.specs{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);column-gap:clamp(32px,5vw,72px);margin:0}
-.specs div{display:grid;grid-template-columns:minmax(120px,.8fr) minmax(0,1.6fr);gap:16px;padding:18px 0;border-top:1px solid var(--line)}
-.specs dt{font:500 12.5px/1.6 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
-.specs dd{margin:0;color:var(--ink2)}
-.specs dd small{display:block;color:var(--faint);font-size:14px;margin-top:2px}
-@media (max-width:859px){.specs{grid-template-columns:1fr}}
-@media (max-width:420px){.specs div{grid-template-columns:1fr;gap:4px}}
+.steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(24px,3vw,40px);list-style:none;margin:0;padding:0}
+.steps li{border-top:1px solid var(--ink);padding-top:20px}
+.steps .n{font:500 12.5px/1 var(--mono);color:var(--faint);letter-spacing:.07em}
+.steps h3{font-size:22px;margin:10px 0}
+.steps p{color:var(--muted)}
+@media (max-width:899px){.steps{grid-template-columns:1fr;row-gap:28px}}
+.demo-film{margin:0;max-width:1120px}
+.demo-film figcaption{text-align:left}
 .get{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:clamp(32px,6vw,96px);align-items:start}
 .plat{padding:26px 0;border-top:1px solid var(--line)}
 .plat:first-child{border-top-color:var(--ink)}
 .plat h3{font-size:22px}
 .plat p{color:var(--muted);margin-top:8px}
 .plat .btn{margin-top:20px}
-.plat .fine{font-size:14px;color:var(--faint);margin-top:12px}
-.plat a.text{color:var(--ink);text-underline-offset:3px}
+.plat .fine{margin-top:12px}
+
 .qr-box{display:flex;gap:20px;align-items:center;padding:20px;border:1px solid var(--line);border-radius:20px;background:var(--bg2)}
 .qr{width:164px;height:164px;flex:none;border-radius:8px}
 .qr-box p{font-size:15px;color:var(--muted)}
@@ -126,119 +103,79 @@ main section{scroll-margin-top:64px}
 @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}.btn,.faq summary::after,header{transition:none}}
 footer{border-top:1px solid var(--line);padding:40px 0 48px;font-size:14px;color:var(--faint)}
 .foot{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:24px 40px;align-items:start}
-.foot .logo svg{height:20px}
+.foot .logo svg{height:20px;transform:translateY(2px)}
 .foot p{max-width:46em}
-.foot nav{display:flex;gap:20px}
-.foot nav a{color:var(--muted);text-underline-offset:3px}
+.foot nav{display:flex;flex-wrap:wrap;gap:4px 20px}.foot nav a{color:var(--muted);text-underline-offset:3px;display:inline-flex;align-items:center;min-height:44px}
 @media (max-width:759px){.foot{grid-template-columns:1fr}}
 
-.hero .fine{font-size:14px;color:var(--faint);margin-top:16px}
-@media (min-width:1024px){.hero{padding-top:clamp(32px,4vw,56px)}.hero .wrap{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:48px;align-items:center;text-align:left}.hero h1,.hero .lede{margin-left:0}.cta{justify-content:flex-start}.stage{width:100%;max-width:min(500px,calc((100vh - 150px) * .74));margin:0 auto}.hero h1{font-size:clamp(48px,5.4vw,76px);max-width:none}}
-@media (max-width:1023px){.hero{padding-top:clamp(24px,5vw,56px)}.stage{margin-top:clamp(16px,4vw,36px);max-width:480px}}
-.anat{margin:0 0 clamp(36px,5vw,56px)}
-.anat svg{width:100%;height:auto;max-width:860px;margin:0 auto}
-.anat .s-body,.anat .s-mk path,.anat .s-mk circle,.anat .s-module{vector-effect:non-scaling-stroke}.anat .s-mk path{stroke:var(--ink);stroke-width:1;fill:none}
-.anat .s-mk circle{fill:var(--bg);stroke:var(--ink);stroke-width:1.2}
-.anat .s-mk text{font:600 12px var(--sans);fill:var(--ink);text-anchor:middle}
-.anat ol{list-style:none;margin:20px auto 0;max-width:860px;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 24px;counter-reset:a}
-.anat li{counter-increment:a;font-size:14px;color:var(--ink2);display:flex;gap:10px;align-items:baseline}
-.anat li::before{content:counter(a);flex:none;width:20px;height:20px;border:1.2px solid var(--ink);border-radius:50%;font:600 11px/17px var(--sans);text-align:center;color:var(--ink)}
-@media (max-width:759px){.anat ol{grid-template-columns:1fr 1fr}}
-header .logo svg{transform:translateY(3px)}.foot .logo svg{transform:translateY(2px)}
-.items{pointer-events:none}.anat figcaption{text-align:center;font-size:13px;color:var(--faint);margin-top:14px}
+.vctl:focus-visible{outline:2px solid #FAFAFA;outline-offset:2px;box-shadow:0 0 0 5px #18181B}
+@media (prefers-color-scheme:dark){.film{outline:1px solid var(--line)}}
+@media (max-width:599px){#demo .film{aspect-ratio:720/1160;max-width:420px;margin:0 auto}}
+@media (max-width:599px){.hero .film{aspect-ratio:4/5}}
+.faq summary{min-height:44px}
+nav.top a,.foot nav a{min-width:44px;justify-content:center}
+@media (min-width:900px){.hero{padding-top:clamp(24px,3vw,40px)}.hero h1{max-width:none;font-size:clamp(42px,5vw,64px)}.lede{margin-top:16px}.cta{margin-top:24px}.hero .film{margin-top:28px}}
+html{scroll-padding-top:72px}
+@media (max-width:599px){.demo-film figcaption{max-width:420px;margin-inline:auto}}
 </style>
+<noscript><style>.hero .film{background:center/cover url(media/bagit-concept-poster.jpg)}#demo .film{background:center/cover url(media/bagit-live-trip-poster.jpg)}</style></noscript>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <header id="top">
 <div class="wrap bar">
 <a class="logo" href="#top" aria-label="Bag It, back to top"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 9 146 45" role="img" aria-label="Bag It"><g transform="translate(-8 -2)"><path fill="currentColor" fill-rule="evenodd" d="M10.5 12h27a2.5 2.5 0 0 1 2.5 2.6l-1 26.6a2.8 2.8 0 0 1-2.8 2.8H12.8a2.8 2.8 0 0 1-2.8-2.8l-1-26.6A2.5 2.5 0 0 1 10.5 12zM18.9 17.5h10.2a2.4 2.4 0 0 1 0 4.8H18.9a2.4 2.4 0 0 1 0-4.8z"/><path fill="#E8654A" d="M18.9 17.5h10.2a2.4 2.4 0 0 1 0 4.8H18.9a2.4 2.4 0 0 1 0-4.8z"/></g><g transform="translate(41 0)"><g fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12V40"/><circle cx="10" cy="32" r="8"/><circle cx="33.5" cy="32" r="8"/><path d="M41.5 24V40"/><circle cx="57.5" cy="32" r="8"/><path d="M65.5 24V43a8 8 0 0 1-8 8h-4"/><path d="M83 24V40"/><path d="M95 14V35a5 5 0 0 0 5 5h1.5M90 24H100"/></g><circle cx="83" cy="15.2" r="3.1" fill="currentColor"/></g></svg></a>
-<nav class="top" aria-label="Sections"><a href="#how">How it works</a><a href="#specs">Specs</a><a href="#faq">FAQ</a></nav>
+<nav class="top" aria-label="Sections"><a href="#how">How it works</a><a href="#demo">Demo</a><a href="#faq">FAQ</a></nav>
 <a class="btn btn-1 btn-s" href="#get">Get the app</a>
 </div>
 </header>
 <main id="main">
 <section class="hero" aria-labelledby="hero-h">
 <div class="wrap">
-<div>
-<p class="label">Prototype · Cal Hacks 13.0</p>
+<p class="label">Early access</p>
 <h1 id="hero-h">The bag that checks you out.</h1>
-<p class="lede">Drop your groceries in and walk out of the store. Bag It totals everything and the receipt lands on your phone. No checkout line.</p>
-<div class="cta"><a class="btn btn-1" id="hero-get" href="#get">Get the app</a><a class="btn btn-2" href="#how">How it works</a></div>
-<p class="fine">Android 8.0+ · 6.6 MB · iPhone: source build only</p>
-</div>
-<!-- PRODUCT IMAGE: to use a real photo, replace the <svg class="bag"> element below with
-     <img class="bag" src="images/bag.jpg" width="1040" height="1405" alt="The Bag It smart bag">  (see images/README.md) -->
-<figure class="stage"><svg class="bag" viewBox="86 56 348 470" role="img" aria-labelledby="bag-t"><title id="bag-t">Illustration of the Bag It smart bag: a fabric tote with a small module on the rim that holds the status light, and two small cameras at the rim corners for the optional vision module.</title>
-<ellipse cx="260" cy="512" rx="170" ry="10" class="s-shadow"/>
-<defs><linearGradient id="bag-rv" gradientUnits="userSpaceOnUse" x1="0" y1="60" x2="0" y2="118"><stop offset="0" stop-color="#000"/><stop offset="1" stop-color="#fff"/></linearGradient><mask id="bag-mk" maskUnits="userSpaceOnUse" x="0" y="0" width="520" height="560"><rect x="0" y="0" width="520" height="560" fill="url(#bag-rv)"/></mask></defs><g class="items" mask="url(#bag-mk)" aria-hidden="true">
-<g class="item item-a"><g transform="translate(236 64)"><path d="M4 30 24 10 44 30v62a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4z" class="s-item"/><path d="M4 30h40M18 4h12v6H18z" class="s-item"/><path d="M12 52h24" class="s-item-l"/></g></g>
-<g class="item item-b"><g transform="translate(232 84)"><rect x="6" y="8" width="44" height="66" rx="8" class="s-item"/><path d="M6 24h44M6 58h44" class="s-item-l"/></g></g></g>
-<path d="M186 190C186 66 334 66 334 190" class="s-strap-o"/><path d="M186 190C186 66 334 66 334 190" class="s-strap"/>
-
-<path d="M118 176h284a8 8 0 0 1 8 8.5l-12.6 301A15 15 0 0 1 382.4 500H137.6a15 15 0 0 1-15-14.5L110 184.5a8 8 0 0 1 8-8.5z" class="s-body"/>
-<path d="M110.7 192.5h298.6l-1.2 29.5H111.9z" class="s-rim"/>
-<g class="s-cam"><circle cx="140" cy="207" r="8.5"/><circle cx="380" cy="207" r="8.5"/></g>
-<g class="s-lens"><circle cx="140" cy="207" r="3.4"/><circle cx="380" cy="207" r="3.4"/></g>
-<rect x="216" y="184" width="88" height="46" rx="13" class="s-module"/><path d="M228 222h64" class="s-seam"/>
-<rect x="243" y="198" width="34" height="10" rx="5" class="s-led"/>
-<g class="s-deboss" transform="translate(226.4 318) scale(1.4)"><path fill="currentColor" fill-rule="evenodd" d="M10.5 12h27a2.5 2.5 0 0 1 2.5 2.6l-1 26.6a2.8 2.8 0 0 1-2.8 2.8H12.8a2.8 2.8 0 0 1-2.8-2.8l-1-26.6A2.5 2.5 0 0 1 10.5 12zM18.9 17.5h10.2a2.4 2.4 0 0 1 0 4.8H18.9a2.4 2.4 0 0 1 0-4.8z"/></g>
-</svg></figure>
+<p class="lede">Drop tagged groceries in and walk out. Your phone shows what’s in the bag, and your receipt arrives the moment you leave. No lines, no scanning.</p>
+<div class="cta"><a class="btn btn-1" id="hero-get" href="#get">Get the app</a><a class="btn btn-2" href="#demo">Watch the demo</a></div>
+<p class="fine">Bags not on sale yet · Android app available now · Coming soon to iPhone</p>
+<figure style="margin:0">
+<div class="film"><video id="v-hero" muted loop playsinline controls preload="none" data-poster="media/bagit-concept-poster.jpg" data-poster-narrow="media/bagit-concept-portrait-poster.jpg" aria-label="Product film: the Bag It bag on its own, a banana dropped into it in a grocery aisle, a closer look at the bag, and a shopper walking out through the store doors with it. On-screen text: Drop it in. Each item, priced as it goes in. Walk out." aria-describedby="cap-hero"><source media="(max-width:599px)" src="media/bagit-concept-portrait.webm" type="video/webm"><source media="(max-width:599px)" src="media/bagit-concept-portrait.mp4" type="video/mp4"><source src="media/bagit-concept.webm" type="video/webm"><source src="media/bagit-concept.mp4" type="video/mp4"></video><button class="vctl" type="button" data-for="v-hero" data-name="product film" aria-label="Pause product film" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 3h2.5v10H4.5zM9 3h2.5v10H9z" fill="currentColor"/></svg></button></div>
+<figcaption id="cap-hero">Product images are illustrative.</figcaption>
+</figure>
 </div>
 </section>
 
 <section class="sec" id="how" aria-labelledby="how-h">
 <div class="wrap">
 <div class="head"><p class="label">How it works</p><h2 id="how-h">Shop like you always do.</h2></div>
-<ol class="beats">
-<li><p class="n">01</p><h3>Drop it in</h3><p>Put items straight into the bag. It reports each tagged item to your phone, and your list keeps up.</p></li>
-<li><p class="n">02</p><h3>It knows</h3><p>The bag talks to your phone over Bluetooth. Your phone’s location tells the app which store you’re in, so every item gets that store’s price.</p></li>
-<li><p class="n">03</p><h3>Walk out</h3><p>Leave the store and you’re charged automatically (simulated in this prototype). The receipt appears on your phone with a notification, and the bag’s light confirms it.</p></li>
+<ol class="steps">
+<li><p class="n">01</p><h3>Drop it in</h3><p>Put tagged groceries straight into your bag as you shop. No scanning, no queue.</p></li>
+<li><p class="n">02</p><h3>It knows</h3><p>Each item shows up in the app with the store’s price, so you always know your total.</p></li>
+<li><p class="n">03</p><h3>Walk out</h3><p>Leave the store and you’re charged automatically. Your receipt arrives on your phone, and the light on the bag confirms it. During early access, payments are simulated.</p></li>
 </ol>
 </div>
 </section>
 
-<section class="sec" id="specs" aria-labelledby="specs-h">
+<section class="sec" id="demo" aria-labelledby="demo-h">
 <div class="wrap">
-<div class="head"><p class="label">Inside the bag</p><h2 id="specs-h">Prototype specs.</h2><p>What the current prototype is built from. Size, weight and power aren’t specified yet.</p></div>
-<figure class="anat"><svg class="bag anat-svg" viewBox="92 136 336 120" aria-hidden="true">
-<defs><linearGradient id="anat-g" gradientUnits="userSpaceOnUse" x1="0" y1="226" x2="0" y2="256"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#000"/></linearGradient><mask id="anat-m" maskUnits="userSpaceOnUse" x="80" y="120" width="360" height="150"><rect x="80" y="120" width="360" height="150" fill="url(#anat-g)"/></mask></defs><g mask="url(#anat-m)"><ellipse cx="260" cy="512" rx="170" ry="10" class="s-shadow"/>
-<path d="M186 190C186 66 334 66 334 190" class="s-strap-o"/><path d="M186 190C186 66 334 66 334 190" class="s-strap"/>
-
-<path d="M118 176h284a8 8 0 0 1 8 8.5l-12.6 301A15 15 0 0 1 382.4 500H137.6a15 15 0 0 1-15-14.5L110 184.5a8 8 0 0 1 8-8.5z" class="s-body"/>
-<path d="M110.7 192.5h298.6l-1.2 29.5H111.9z" class="s-rim"/>
-<g class="s-cam"><circle cx="140" cy="207" r="8.5"/><circle cx="380" cy="207" r="8.5"/></g>
-<g class="s-lens"><circle cx="140" cy="207" r="3.4"/><circle cx="380" cy="207" r="3.4"/></g>
-<rect x="216" y="184" width="88" height="46" rx="13" class="s-module"/><path d="M228 222h64" class="s-seam"/>
-<rect x="243" y="198" width="34" height="10" rx="5" class="s-led"/>
-<g class="s-deboss" transform="translate(226.4 318) scale(1.4)"><path fill="currentColor" fill-rule="evenodd" d="M10.5 12h27a2.5 2.5 0 0 1 2.5 2.6l-1 26.6a2.8 2.8 0 0 1-2.8 2.8H12.8a2.8 2.8 0 0 1-2.8-2.8l-1-26.6A2.5 2.5 0 0 1 10.5 12zM18.9 17.5h10.2a2.4 2.4 0 0 1 0 4.8H18.9a2.4 2.4 0 0 1 0-4.8z"/></g>
-</g><g class="s-mk"><path d="M140 198V156"/><circle cx="140" cy="156" r="11"/><text x="140" y="160.3">1</text><path d="M260 184V156"/><circle cx="260" cy="156" r="11"/><text x="260" y="160.3">2</text><path d="M277 203H319"/><circle cx="330" cy="203" r="11"/><text x="330" y="207.3">3</text></g></svg>
-<ol aria-label="Parts on the bag’s rim"><li>Rim cameras, for the optional vision module</li><li>Module: ESP32 with Bluetooth Low Energy</li><li>Status light</li></ol><figcaption>Illustration of the prototype.</figcaption></figure>
-<dl class="specs">
-<div><dt>Controller</dt><dd>ESP32 microcontroller</dd></div>
-<div><dt>Connection</dt><dd>Bluetooth Low Energy to your phone<small>Nordic UART service</small></dd></div>
-<div><dt>Item sensing</dt><dd>Tagged items, each tag counted once<small>The tag reader is still a prototype input</small></dd></div>
-<div><dt>Vision (optional)</dt><dd>Two rim cameras and a Jetson Nano running YOLOv8n on the device</dd></div>
-<div><dt>Status light</dt><dd>Confirms when your bag is paid</dd></div>
-<div><dt>Store detection</dt><dd>Your phone’s precise location</dd></div>
-<div><dt>Checkout</dt><dd>Automatic when you walk out</dd></div>
-<div><dt>Companion app</dt><dd>Android 8.0 or newer<small>iPhone (iOS 16+) as a source build</small></dd></div>
-</dl>
+<div class="head"><p class="label">Demo</p><h2 id="demo-h">See it work.</h2><p>One trip on the live Bag It service, seen on the shopper’s phone. Three items go in, the phone leaves the store, and the receipt arrives a fraction of a second after the phone leaves the store.</p></div>
+<figure class="demo-film">
+<div class="film"><video id="v-demo" muted loop playsinline controls preload="none" data-poster="media/bagit-live-trip-poster.jpg" data-poster-narrow="media/bagit-live-trip-portrait-poster.jpg" aria-label="Recording of a real trip in the Bag It app: the phone shows You’re at Bayside Grocer, then organic bananas $1.29, Honeycrisp apples $3.99 and a sourdough loaf $6.49 appear one by one, then Leaving Bayside Grocer, then Paid as you left Bayside Grocer, $11.77, with a demo card." aria-describedby="cap-demo"><source media="(max-width:599px)" src="media/bagit-live-trip-portrait.webm" type="video/webm"><source media="(max-width:599px)" src="media/bagit-live-trip-portrait.mp4" type="video/mp4"><source src="media/bagit-live-trip.webm" type="video/webm"><source src="media/bagit-live-trip.mp4" type="video/mp4"></video><button class="vctl" type="button" data-for="v-demo" data-name="demo" aria-label="Pause demo" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 3h2.5v10H4.5zM9 3h2.5v10H9z" fill="currentColor"/></svg></button></div>
+<figcaption id="cap-demo">Recorded live on the Bag It service. For this recording the store visit and items were simulated, and the phone screen is a web copy of the app’s screens. Demo payment, no card charged.</figcaption>
+</figure>
 </div>
 </section>
 
 <section class="sec" id="get" aria-labelledby="get-h">
 <div class="wrap">
-<div class="head"><p class="label">Get the app</p><h2 id="get-h">Your bag pairs with your phone.</h2><p>The companion app is called SmartBag. It shows what’s in your bag and keeps your receipts.</p></div>
+<div class="head"><p class="label">Get the app</p><h2 id="get-h">Get the app.</h2><p>Bags aren’t on sale yet. The app works with a Bag It bag in one of a few demo stores during early access. Download it now to be ready.</p></div>
 <div class="get">
 <div>
-<div class="plat"><h3>Android</h3><p>Version 3.0 for Android 8.0 or newer.</p>
+<div class="plat"><h3>Android</h3><p>Version 3.0 · Android 8.0 or newer · 6.6 MB</p>
 <a class="btn btn-1" href="downloads/SmartBag-3.0.apk" download><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>Download for Android</a>
-<p class="fine">APK, 6.6 MB. It isn’t on Google Play yet, so Android will ask you to allow the install. Then allow Bluetooth (Nearby devices), precise location and notifications, open SmartBag near your bag and tap Connect bag.</p></div>
-<div class="plat"><h3>iPhone</h3><p>Not on the App Store yet. Developers can build it from source with Xcode 15 for iOS 16 or newer.</p>
-<p class="fine"><a class="text" href="downloads/SmartBag-iOS-source-1.0.zip" download>Download iPhone source (ZIP, 72 KB)</a></p></div>
+<p class="fine">It isn’t on Google Play yet, so Android will ask you to allow the install; on your phone it appears as SmartBag. Then allow Bluetooth (Nearby devices on Android 12 and newer), precise location and notifications, open the app near your bag and tap Connect bag. During early access, payments are simulated, and your phone’s location and trips are stored as test data that anyone can read.</p></div>
+<div class="plat"><h3>iPhone</h3><p>Coming soon to iPhone.</p></div>
 </div>
-<div class="qr-box"><svg class="qr" viewBox="-4 -4 41 41" role="img" aria-label="QR code linking to the Android app download" shape-rendering="crispEdges"><rect x="-4" y="-4" width="41" height="41" fill="#fff"/><path fill="#18181B" d="M0 0h7v1h-7zM9 0h6v1h-6zM16 0h8v1h-8zM26 0h7v1h-7zM0 1h1v1h-1zM6 1h1v1h-1zM9 1h7v1h-7zM17 1h1v1h-1zM20 1h2v1h-2zM24 1h1v1h-1zM26 1h1v1h-1zM32 1h1v1h-1zM0 2h1v1h-1zM2 2h3v1h-3zM6 2h1v1h-1zM8 2h2v1h-2zM11 2h3v1h-3zM15 2h8v1h-8zM26 2h1v1h-1zM28 2h3v1h-3zM32 2h1v1h-1zM0 3h1v1h-1zM2 3h3v1h-3zM6 3h1v1h-1zM8 3h1v1h-1zM11 3h1v1h-1zM14 3h3v1h-3zM19 3h2v1h-2zM22 3h1v1h-1zM24 3h1v1h-1zM26 3h1v1h-1zM28 3h3v1h-3zM32 3h1v1h-1zM0 4h1v1h-1zM2 4h3v1h-3zM6 4h1v1h-1zM8 4h1v1h-1zM10 4h3v1h-3zM15 4h1v1h-1zM18 4h1v1h-1zM21 4h3v1h-3zM26 4h1v1h-1zM28 4h3v1h-3zM32 4h1v1h-1zM0 5h1v1h-1zM6 5h1v1h-1zM8 5h3v1h-3zM13 5h1v1h-1zM15 5h2v1h-2zM20 5h1v1h-1zM22 5h1v1h-1zM24 5h1v1h-1zM26 5h1v1h-1zM32 5h1v1h-1zM0 6h7v1h-7zM8 6h1v1h-1zM10 6h1v1h-1zM12 6h1v1h-1zM14 6h1v1h-1zM16 6h1v1h-1zM18 6h1v1h-1zM20 6h1v1h-1zM22 6h1v1h-1zM24 6h1v1h-1zM26 6h7v1h-7zM8 7h5v1h-5zM14 7h2v1h-2zM18 7h1v1h-1zM21 7h3v1h-3zM0 8h1v1h-1zM2 8h5v1h-5zM10 8h4v1h-4zM15 8h1v1h-1zM17 8h1v1h-1zM22 8h2v1h-2zM26 8h5v1h-5zM0 9h4v1h-4zM7 9h4v1h-4zM16 9h1v1h-1zM18 9h2v1h-2zM21 9h1v1h-1zM23 9h1v1h-1zM26 9h2v1h-2zM29 9h2v1h-2zM32 9h1v1h-1zM0 10h3v1h-3zM6 10h2v1h-2zM15 10h2v1h-2zM18 10h1v1h-1zM20 10h2v1h-2zM25 10h1v1h-1zM28 10h1v1h-1zM30 10h2v1h-2zM0 11h1v1h-1zM7 11h2v1h-2zM14 11h2v1h-2zM19 11h1v1h-1zM21 11h1v1h-1zM24 11h3v1h-3zM28 11h4v1h-4zM0 12h1v1h-1zM6 12h5v1h-5zM12 12h1v1h-1zM15 12h1v1h-1zM18 12h1v1h-1zM22 12h3v1h-3zM27 12h3v1h-3zM31 12h2v1h-2zM1 13h3v1h-3zM5 13h1v1h-1zM9 13h1v1h-1zM11 13h1v1h-1zM13 13h5v1h-5zM20 13h1v1h-1zM23 13h2v1h-2zM26 13h1v1h-1zM30 13h3v1h-3zM1 14h3v1h-3zM5 14h2v1h-2zM8 14h1v1h-1zM11 14h2v1h-2zM17 14h1v1h-1zM19 14h1v1h-1zM21 14h1v1h-1zM24 14h3v1h-3zM29 14h3v1h-3zM0 15h1v1h-1zM2 15h3v1h-3zM7 15h3v1h-3zM11 15h2v1h-2zM16 15h1v1h-1zM19 15h4v1h-4zM24 15h4v1h-4zM29 15h2v1h-2zM0 16h3v1h-3zM5 16h5v1h-5zM11 16h1v1h-1zM17 16h1v1h-1zM19 16h2v1h-2zM22 16h1v1h-1zM24 16h2v1h-2zM27 16h3v1h-3zM32 16h1v1h-1zM1 17h1v1h-1zM5 17h1v1h-1zM7 17h2v1h-2zM10 17h2v1h-2zM14 17h1v1h-1zM16 17h2v1h-2zM19 17h2v1h-2zM22 17h2v1h-2zM26 17h2v1h-2zM29 17h2v1h-2zM32 17h1v1h-1zM1 18h1v1h-1zM3 18h1v1h-1zM5 18h3v1h-3zM11 18h3v1h-3zM15 18h3v1h-3zM20 18h1v1h-1zM25 18h4v1h-4zM30 18h2v1h-2zM0 19h1v1h-1zM5 19h1v1h-1zM9 19h1v1h-1zM11 19h2v1h-2zM16 19h3v1h-3zM20 19h4v1h-4zM25 19h1v1h-1zM27 19h6v1h-6zM0 20h2v1h-2zM3 20h1v1h-1zM6 20h1v1h-1zM11 20h3v1h-3zM16 20h1v1h-1zM20 20h2v1h-2zM27 20h3v1h-3zM0 21h2v1h-2zM4 21h1v1h-1zM7 21h2v1h-2zM10 21h1v1h-1zM13 21h3v1h-3zM18 21h1v1h-1zM21 21h1v1h-1zM23 21h4v1h-4zM30 21h1v1h-1zM32 21h1v1h-1zM0 22h1v1h-1zM3 22h1v1h-1zM6 22h1v1h-1zM8 22h5v1h-5zM14 22h4v1h-4zM20 22h3v1h-3zM24 22h1v1h-1zM27 22h2v1h-2zM31 22h1v1h-1zM0 23h1v1h-1zM2 23h4v1h-4zM7 23h6v1h-6zM14 23h2v1h-2zM21 23h1v1h-1zM23 23h1v1h-1zM26 23h2v1h-2zM29 23h4v1h-4zM0 24h1v1h-1zM3 24h1v1h-1zM5 24h2v1h-2zM8 24h3v1h-3zM12 24h2v1h-2zM15 24h1v1h-1zM17 24h1v1h-1zM20 24h1v1h-1zM22 24h8v1h-8zM31 24h2v1h-2zM8 25h2v1h-2zM11 25h4v1h-4zM16 25h1v1h-1zM18 25h4v1h-4zM24 25h1v1h-1zM28 25h1v1h-1zM30 25h2v1h-2zM0 26h7v1h-7zM14 26h2v1h-2zM18 26h1v1h-1zM21 26h1v1h-1zM23 26h2v1h-2zM26 26h1v1h-1zM28 26h1v1h-1zM30 26h2v1h-2zM0 27h1v1h-1zM6 27h1v1h-1zM8 27h1v1h-1zM10 27h1v1h-1zM12 27h2v1h-2zM15 27h2v1h-2zM19 27h3v1h-3zM23 27h2v1h-2zM28 27h5v1h-5zM0 28h1v1h-1zM2 28h3v1h-3zM6 28h1v1h-1zM8 28h2v1h-2zM11 28h1v1h-1zM13 28h2v1h-2zM18 28h2v1h-2zM21 28h1v1h-1zM24 28h6v1h-6zM31 28h2v1h-2zM0 29h1v1h-1zM2 29h3v1h-3zM6 29h1v1h-1zM8 29h3v1h-3zM15 29h3v1h-3zM20 29h1v1h-1zM23 29h3v1h-3zM28 29h3v1h-3zM32 29h1v1h-1zM0 30h1v1h-1zM2 30h3v1h-3zM6 30h1v1h-1zM8 30h1v1h-1zM11 30h2v1h-2zM14 30h1v1h-1zM17 30h1v1h-1zM19 30h1v1h-1zM21 30h1v1h-1zM24 30h1v1h-1zM26 30h2v1h-2zM30 30h1v1h-1zM0 31h1v1h-1zM6 31h1v1h-1zM10 31h1v1h-1zM14 31h1v1h-1zM16 31h1v1h-1zM18 31h4v1h-4zM28 31h3v1h-3zM0 32h7v1h-7zM8 32h1v1h-1zM12 32h3v1h-3zM17 32h1v1h-1zM19 32h1v1h-1zM24 32h4v1h-4zM30 32h2v1h-2z"/></svg><p><b>On a computer?</b>Scan with your Android phone to download the app.</p></div>
+<div class="qr-box"><svg class="qr" viewBox="-4 -4 41 41" role="img" aria-label="QR code that downloads the Bag It app for Android" shape-rendering="crispEdges"><rect x="-4" y="-4" width="41" height="41" fill="#fff"/><path fill="#18181B" d="M0 0h7v1h-7zM9 0h6v1h-6zM16 0h8v1h-8zM26 0h7v1h-7zM0 1h1v1h-1zM6 1h1v1h-1zM9 1h7v1h-7zM17 1h1v1h-1zM20 1h2v1h-2zM24 1h1v1h-1zM26 1h1v1h-1zM32 1h1v1h-1zM0 2h1v1h-1zM2 2h3v1h-3zM6 2h1v1h-1zM8 2h2v1h-2zM11 2h3v1h-3zM15 2h8v1h-8zM26 2h1v1h-1zM28 2h3v1h-3zM32 2h1v1h-1zM0 3h1v1h-1zM2 3h3v1h-3zM6 3h1v1h-1zM8 3h1v1h-1zM11 3h1v1h-1zM14 3h3v1h-3zM19 3h2v1h-2zM22 3h1v1h-1zM24 3h1v1h-1zM26 3h1v1h-1zM28 3h3v1h-3zM32 3h1v1h-1zM0 4h1v1h-1zM2 4h3v1h-3zM6 4h1v1h-1zM8 4h1v1h-1zM10 4h3v1h-3zM15 4h1v1h-1zM18 4h1v1h-1zM21 4h3v1h-3zM26 4h1v1h-1zM28 4h3v1h-3zM32 4h1v1h-1zM0 5h1v1h-1zM6 5h1v1h-1zM8 5h3v1h-3zM13 5h1v1h-1zM15 5h2v1h-2zM20 5h1v1h-1zM22 5h1v1h-1zM24 5h1v1h-1zM26 5h1v1h-1zM32 5h1v1h-1zM0 6h7v1h-7zM8 6h1v1h-1zM10 6h1v1h-1zM12 6h1v1h-1zM14 6h1v1h-1zM16 6h1v1h-1zM18 6h1v1h-1zM20 6h1v1h-1zM22 6h1v1h-1zM24 6h1v1h-1zM26 6h7v1h-7zM8 7h5v1h-5zM14 7h2v1h-2zM18 7h1v1h-1zM21 7h3v1h-3zM0 8h1v1h-1zM2 8h5v1h-5zM10 8h4v1h-4zM15 8h1v1h-1zM17 8h1v1h-1zM22 8h2v1h-2zM26 8h5v1h-5zM0 9h4v1h-4zM7 9h4v1h-4zM16 9h1v1h-1zM18 9h2v1h-2zM21 9h1v1h-1zM23 9h1v1h-1zM26 9h2v1h-2zM29 9h2v1h-2zM32 9h1v1h-1zM0 10h3v1h-3zM6 10h2v1h-2zM15 10h2v1h-2zM18 10h1v1h-1zM20 10h2v1h-2zM25 10h1v1h-1zM28 10h1v1h-1zM30 10h2v1h-2zM0 11h1v1h-1zM7 11h2v1h-2zM14 11h2v1h-2zM19 11h1v1h-1zM21 11h1v1h-1zM24 11h3v1h-3zM28 11h4v1h-4zM0 12h1v1h-1zM6 12h5v1h-5zM12 12h1v1h-1zM15 12h1v1h-1zM18 12h1v1h-1zM22 12h3v1h-3zM27 12h3v1h-3zM31 12h2v1h-2zM1 13h3v1h-3zM5 13h1v1h-1zM9 13h1v1h-1zM11 13h1v1h-1zM13 13h5v1h-5zM20 13h1v1h-1zM23 13h2v1h-2zM26 13h1v1h-1zM30 13h3v1h-3zM1 14h3v1h-3zM5 14h2v1h-2zM8 14h1v1h-1zM11 14h2v1h-2zM17 14h1v1h-1zM19 14h1v1h-1zM21 14h1v1h-1zM24 14h3v1h-3zM29 14h3v1h-3zM0 15h1v1h-1zM2 15h3v1h-3zM7 15h3v1h-3zM11 15h2v1h-2zM16 15h1v1h-1zM19 15h4v1h-4zM24 15h4v1h-4zM29 15h2v1h-2zM0 16h3v1h-3zM5 16h5v1h-5zM11 16h1v1h-1zM17 16h1v1h-1zM19 16h2v1h-2zM22 16h1v1h-1zM24 16h2v1h-2zM27 16h3v1h-3zM32 16h1v1h-1zM1 17h1v1h-1zM5 17h1v1h-1zM7 17h2v1h-2zM10 17h2v1h-2zM14 17h1v1h-1zM16 17h2v1h-2zM19 17h2v1h-2zM22 17h2v1h-2zM26 17h2v1h-2zM29 17h2v1h-2zM32 17h1v1h-1zM1 18h1v1h-1zM3 18h1v1h-1zM5 18h3v1h-3zM11 18h3v1h-3zM15 18h3v1h-3zM20 18h1v1h-1zM25 18h4v1h-4zM30 18h2v1h-2zM0 19h1v1h-1zM5 19h1v1h-1zM9 19h1v1h-1zM11 19h2v1h-2zM16 19h3v1h-3zM20 19h4v1h-4zM25 19h1v1h-1zM27 19h6v1h-6zM0 20h2v1h-2zM3 20h1v1h-1zM6 20h1v1h-1zM11 20h3v1h-3zM16 20h1v1h-1zM20 20h2v1h-2zM27 20h3v1h-3zM0 21h2v1h-2zM4 21h1v1h-1zM7 21h2v1h-2zM10 21h1v1h-1zM13 21h3v1h-3zM18 21h1v1h-1zM21 21h1v1h-1zM23 21h4v1h-4zM30 21h1v1h-1zM32 21h1v1h-1zM0 22h1v1h-1zM3 22h1v1h-1zM6 22h1v1h-1zM8 22h5v1h-5zM14 22h4v1h-4zM20 22h3v1h-3zM24 22h1v1h-1zM27 22h2v1h-2zM31 22h1v1h-1zM0 23h1v1h-1zM2 23h4v1h-4zM7 23h6v1h-6zM14 23h2v1h-2zM21 23h1v1h-1zM23 23h1v1h-1zM26 23h2v1h-2zM29 23h4v1h-4zM0 24h1v1h-1zM3 24h1v1h-1zM5 24h2v1h-2zM8 24h3v1h-3zM12 24h2v1h-2zM15 24h1v1h-1zM17 24h1v1h-1zM20 24h1v1h-1zM22 24h8v1h-8zM31 24h2v1h-2zM8 25h2v1h-2zM11 25h4v1h-4zM16 25h1v1h-1zM18 25h4v1h-4zM24 25h1v1h-1zM28 25h1v1h-1zM30 25h2v1h-2zM0 26h7v1h-7zM14 26h2v1h-2zM18 26h1v1h-1zM21 26h1v1h-1zM23 26h2v1h-2zM26 26h1v1h-1zM28 26h1v1h-1zM30 26h2v1h-2zM0 27h1v1h-1zM6 27h1v1h-1zM8 27h1v1h-1zM10 27h1v1h-1zM12 27h2v1h-2zM15 27h2v1h-2zM19 27h3v1h-3zM23 27h2v1h-2zM28 27h5v1h-5zM0 28h1v1h-1zM2 28h3v1h-3zM6 28h1v1h-1zM8 28h2v1h-2zM11 28h1v1h-1zM13 28h2v1h-2zM18 28h2v1h-2zM21 28h1v1h-1zM24 28h6v1h-6zM31 28h2v1h-2zM0 29h1v1h-1zM2 29h3v1h-3zM6 29h1v1h-1zM8 29h3v1h-3zM15 29h3v1h-3zM20 29h1v1h-1zM23 29h3v1h-3zM28 29h3v1h-3zM32 29h1v1h-1zM0 30h1v1h-1zM2 30h3v1h-3zM6 30h1v1h-1zM8 30h1v1h-1zM11 30h2v1h-2zM14 30h1v1h-1zM17 30h1v1h-1zM19 30h1v1h-1zM21 30h1v1h-1zM24 30h1v1h-1zM26 30h2v1h-2zM30 30h1v1h-1zM0 31h1v1h-1zM6 31h1v1h-1zM10 31h1v1h-1zM14 31h1v1h-1zM16 31h1v1h-1zM18 31h4v1h-4zM28 31h3v1h-3zM0 32h7v1h-7zM8 32h1v1h-1zM12 32h3v1h-3zM17 32h1v1h-1zM19 32h1v1h-1zM24 32h4v1h-4zM30 32h2v1h-2z"/></svg><p><b>On a computer?</b>Scan with your Android phone to download the app.</p></div>
 </div>
 </div>
 </section>
@@ -247,11 +184,11 @@ header .logo svg{transform:translateY(3px)}.foot .logo svg{transform:translateY(
 <div class="wrap">
 <div class="head"><p class="label">FAQ</p><h2 id="faq-h">Questions.</h2></div>
 <div class="faq">
-<details><summary>Am I actually charged?</summary><div class="a"><p>No. Bag It is a prototype and payments are simulated. No payment details are collected and no money moves; receipts show a demo card.</p></div></details>
-<details><summary>Which stores work?</summary><div class="a"><p>Only the demo stores set up for this prototype. Anywhere else, nothing is priced or charged.</p></div></details>
-<details><summary>What if an item isn’t sold in this store?</summary><div class="a"><p>It shows as “not sold here” and isn’t charged.</p></div></details>
-<details><summary>Why does the app need my location?</summary><div class="a"><p>To know which store you’re in and when you’ve left. Use precise location; approximate isn’t accurate enough. There’s no account: the app uses an anonymous identity. This prototype’s test database is publicly readable.</p></div></details>
-<details><summary>The app can’t find my bag.</summary><div class="a"><p>Make sure the bag is powered and nearby. Turn on Bluetooth, allow Nearby devices for SmartBag, then tap Connect bag.</p></div></details>
+<details><summary>Will I be charged?</summary><div class="a"><p>No. During early access, payments are simulated and no card is ever entered or charged. Receipts show a demo card.</p></div></details>
+<details><summary>Where can I use Bag It?</summary><div class="a"><p>In stores that are set up for it. During early access that’s a small number of demo stores, and bags aren’t on sale yet. Anywhere else, the app won’t price or charge your bag.</p></div></details>
+<details><summary>What if I put in something the store doesn’t sell?</summary><div class="a"><p>The app shows it as not sold here, and you aren’t charged for it.</p></div></details>
+<details><summary>Why does the app need my location?</summary><div class="a"><p>To know which store you’re in and when you’ve left, so it can price your bag and send your receipt. There’s no account: the app uses an anonymous identity. During early access, your phone’s latest location and your trips are stored as test data that anyone can read.</p></div></details>
+<details><summary>The app can’t find my bag.</summary><div class="a"><p>Make sure your bag is powered and nearby, turn on Bluetooth, allow Nearby devices for the app, then tap Connect bag.</p></div></details>
 </div>
 </div>
 </section>
@@ -260,13 +197,30 @@ header .logo svg{transform:translateY(3px)}.foot .logo svg{transform:translateY(
 <footer>
 <div class="wrap foot">
 <a class="logo" href="#top" aria-label="Bag It, back to top"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 9 146 45" role="img" aria-label="Bag It"><g transform="translate(-8 -2)"><path fill="currentColor" fill-rule="evenodd" d="M10.5 12h27a2.5 2.5 0 0 1 2.5 2.6l-1 26.6a2.8 2.8 0 0 1-2.8 2.8H12.8a2.8 2.8 0 0 1-2.8-2.8l-1-26.6A2.5 2.5 0 0 1 10.5 12zM18.9 17.5h10.2a2.4 2.4 0 0 1 0 4.8H18.9a2.4 2.4 0 0 1 0-4.8z"/><path fill="#E8654A" d="M18.9 17.5h10.2a2.4 2.4 0 0 1 0 4.8H18.9a2.4 2.4 0 0 1 0-4.8z"/></g><g transform="translate(41 0)"><g fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12V40"/><circle cx="10" cy="32" r="8"/><circle cx="33.5" cy="32" r="8"/><path d="M41.5 24V40"/><circle cx="57.5" cy="32" r="8"/><path d="M65.5 24V43a8 8 0 0 1-8 8h-4"/><path d="M83 24V40"/><path d="M95 14V35a5 5 0 0 0 5 5h1.5M90 24H100"/></g><circle cx="83" cy="15.2" r="3.1" fill="currentColor"/></g></svg></a>
-<p>A prototype built at Cal Hacks 13.0, October 2026. Payments are simulated, and the database is publicly readable and holds test data only.</p>
-<nav aria-label="Footer"><a href="https://github.com/Scott170c/calhacks">GitHub</a></nav>
+<p>Product images are illustrative. During early access, payments in the app are simulated and no card is charged, and trip data is test data.<br>© 2026 Bag It</p>
+<nav aria-label="Footer"><a href="#how">How it works</a><a href="#demo">Demo</a><a href="#get">Get the app</a><a href="#faq">FAQ</a></nav>
 </div>
 </footer>
 <script>
-(function(){var h=document.querySelector('header');function f(){h.classList.toggle('scrolled',window.scrollY>4)}f();window.addEventListener('scroll',f,{passive:true});
-if(/Android/i.test(navigator.userAgent)){var g=document.getElementById('hero-get');g.href='downloads/SmartBag-3.0.apk';g.setAttribute('download','');g.textContent='Download for Android';var hb=document.querySelector('header .btn');hb.href=g.href;hb.setAttribute('download','');}else if(/iPhone|iPad|iPod/i.test(navigator.userAgent)){var g2=document.getElementById('hero-get');g2.textContent='iPhone: build from source';g2.className='btn btn-2';}})();
+(function(){
+var h=document.querySelector('header');function f(){h.classList.toggle('scrolled',window.scrollY>4)}f();window.addEventListener('scroll',f,{passive:true});
+var ua=navigator.userAgent,g=document.getElementById('hero-get');
+if(/Android/i.test(ua)){g.href='downloads/SmartBag-3.0.apk';g.setAttribute('download','');g.textContent='Download for Android';var hb=document.querySelector('header .btn');hb.href=g.href;hb.setAttribute('download','');hb.textContent='Download';}else if(/iPhone|iPad|iPod/i.test(ua)){g.textContent='Coming soon to iPhone';g.className='btn btn-2';}
+var reduce=(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches)||!!(navigator.connection&&navigator.connection.saveData);
+var narrow=window.matchMedia&&matchMedia('(max-width:599px)').matches;function setP(v){if(!v.poster||v.poster===location.href)v.poster=v.getAttribute(narrow?'data-poster-narrow':'data-poster');}document.querySelectorAll('video[data-poster]').forEach(function(v){if(v.id==='v-hero'||!('IntersectionObserver' in window)){setP(v);return;}var io=new IntersectionObserver(function(es){if(es[0].isIntersecting||es[0].boundingClientRect.top<innerHeight*2){setP(v);io.disconnect();}},{rootMargin:'600px 0px'});io.observe(v);});
+var P='<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7.5-4.5z" fill="currentColor"/></svg>',S='<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 3h2.5v10H4.5zM9 3h2.5v10H9z" fill="currentColor"/></svg>';
+document.querySelectorAll('.vctl').forEach(function(b){
+  var v=document.getElementById(b.getAttribute('data-for'));var nm=b.getAttribute('data-name');
+  function sync(){var p=v.paused;b.innerHTML=p?P:S;b.setAttribute('aria-label',(p?'Play ':'Pause ')+nm);}
+  v.addEventListener('play',sync);v.addEventListener('pause',sync);
+  b.addEventListener('click',function(){if(v.paused)v.play();else v.pause();});
+  if(!reduce){if(v.id==='v-hero')v.preload='auto';v.removeAttribute('controls');b.hidden=false;sync();
+    if('IntersectionObserver' in window){new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){if(!v.dataset.user)v.play().catch(function(){});}else v.pause();});},{threshold:.2}).observe(v);}
+    else v.play().catch(function(){});
+    b.addEventListener('click',function(){v.dataset.user=v.paused?'paused':'';});
+  }
+});
+})();
 </script>
 </body>
 </html>

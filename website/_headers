@@ -2,6 +2,9 @@
   Content-Type: application/vnd.android.package-archive
   Content-Disposition: attachment
 
+/media/*
+  Cache-Control: public, max-age=604800
+
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin

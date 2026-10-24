@@ -1,6 +1,6 @@
 # Bag It brand
 
-**Mark: the slot.** A die-cut tote whose handle slot is coral. The slot is also the bag's status light (the coral pill on the rim module in the illustration), so coral means one thing: the light.
+**Mark: the slot.** A die-cut tote with its handle slot drawn in coral: the coral bar stands for the status light just beneath the handle slot on the real bag, so coral means one thing: the light.
 Wordmark: lowercase monoline "bag it", 4-unit stroke, round caps, drawn as SVG (no font needed).
 
 ## Colours
@@ -16,7 +16,7 @@ Neutrals are zinc. Do not use coral for text, links, focus rings or decoration.
 - `mark.svg`: mark with coral slot. `mark-mono.svg`: one colour, slot knocked out (`currentColor`), for engraving, embroidery, deboss and print.
 - `favicon.svg`: redrawn for 16 px (bigger slot), switches ink in dark tabs.
 - `apple-touch-icon.png`: 180 px, light mark on #18181B.
-- `og-image.png`: 1200×630, rendered from HTML/SVG.
+- `og-image.jpg`: 1200×630, rendered from HTML with the illustrative product image.
 - `explorations/`: the three round-1 directions (a-slot chosen; b-rim, c-b-bag alternates).
 
 ## Clear space and minimum size
