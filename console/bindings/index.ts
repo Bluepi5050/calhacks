@@ -34,25 +34,34 @@ import {
 } from "spacetimedb";
 
 // Import all reducer arg schemas
+import AcceptInviteReducer from "./accept_invite_reducer";
 import BagLineReducer from "./bag_line_reducer";
 import BootstrapReducer from "./bootstrap_reducer";
 import ClaimOperatorReducer from "./claim_operator_reducer";
 import ClearLoadTestReducer from "./clear_load_test_reducer";
+import DeclineInviteReducer from "./decline_invite_reducer";
 import DeleteProductReducer from "./delete_product_reducer";
 import DeleteStoreReducer from "./delete_store_reducer";
+import InviteStaffReducer from "./invite_staff_reducer";
 import JoinStoreReducer from "./join_store_reducer";
 import PinStoreReducer from "./pin_store_reducer";
 import RemoveItemReducer from "./remove_item_reducer";
+import RemoveStaffReducer from "./remove_staff_reducer";
 import ResetDemoReducer from "./reset_demo_reducer";
+import RevokeStaffInviteReducer from "./revoke_staff_invite_reducer";
 import RotateInviteReducer from "./rotate_invite_reducer";
 import SeedLoadTestReducer from "./seed_load_test_reducer";
+import SetAuthClientsReducer from "./set_auth_clients_reducer";
 import SetBagReducer from "./set_bag_reducer";
+import SetDisplayNameReducer from "./set_display_name_reducer";
 import SetPaymentReducer from "./set_payment_reducer";
+import SignInReducer from "./sign_in_reducer";
 import UpdateLocationReducer from "./update_location_reducer";
 import UpsertProductReducer from "./upsert_product_reducer";
 import UpsertStoreReducer from "./upsert_store_reducer";
 
 // Import all procedure arg schemas
+import * as ServerTimeProcedure from "./server_time_procedure";
 import * as ShopBagLineProcedure from "./shop_bag_line_procedure";
 import * as ShopLocateProcedure from "./shop_locate_procedure";
 import * as ShopRemoveProcedure from "./shop_remove_procedure";
@@ -63,12 +72,18 @@ import * as ShopStateProcedure from "./shop_state_procedure";
 // Import all table schema definitions
 import BagEventRow from "./bag_event_table";
 import CartItemRow from "./cart_item_table";
+import MyAccountRow from "./my_account_table";
 import MyCartRow from "./my_cart_table";
+import MyInvitesRow from "./my_invites_table";
 import MyOrdersRow from "./my_orders_table";
 import MyShopperRow from "./my_shopper_table";
+import MyStoreActivityRow from "./my_store_activity_table";
+import MyStorePeopleRow from "./my_store_people_table";
 import MyStoresRow from "./my_stores_table";
+import MyTeamRow from "./my_team_table";
 import OrderLineRow from "./order_line_table";
 import ProductRow from "./product_table";
+import ProfileRow from "./profile_table";
 import ShopOrderRow from "./shop_order_table";
 import ShopperRow from "./shopper_table";
 import StoreRow from "./store_table";
@@ -142,6 +157,17 @@ const tablesSchema = __schema({
       { name: 'product_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, ProductRow),
+  profile: __table({
+    name: 'profile',
+    indexes: [
+      { accessor: 'identity', name: 'profile_identity_idx_btree', algorithm: 'btree', columns: [
+        'identity',
+      ] },
+    ],
+    constraints: [
+      { name: 'profile_identity_key', constraint: 'unique', columns: ['identity'] },
+    ],
+  }, ProfileRow),
   shopOrder: __table({
     name: 'shop_order',
     indexes: [
@@ -196,6 +222,13 @@ const tablesSchema = __schema({
       { name: 'store_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, StoreRow),
+  myAccount: __table({
+    name: 'my_account',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, MyAccountRow),
   myCart: __table({
     name: 'my_cart',
     indexes: [
@@ -203,6 +236,13 @@ const tablesSchema = __schema({
     constraints: [
     ],
   }, MyCartRow),
+  myInvites: __table({
+    name: 'my_invites',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, MyInvitesRow),
   myOrders: __table({
     name: 'my_orders',
     indexes: [
@@ -217,6 +257,20 @@ const tablesSchema = __schema({
     constraints: [
     ],
   }, MyShopperRow),
+  myStoreActivity: __table({
+    name: 'my_store_activity',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, MyStoreActivityRow),
+  myStorePeople: __table({
+    name: 'my_store_people',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, MyStorePeopleRow),
   myStores: __table({
     name: 'my_stores',
     indexes: [
@@ -224,24 +278,39 @@ const tablesSchema = __schema({
     constraints: [
     ],
   }, MyStoresRow),
+  myTeam: __table({
+    name: 'my_team',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, MyTeamRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
+  __reducerSchema("accept_invite", AcceptInviteReducer),
   __reducerSchema("bag_line", BagLineReducer),
   __reducerSchema("bootstrap", BootstrapReducer),
   __reducerSchema("claim_operator", ClaimOperatorReducer),
   __reducerSchema("clear_load_test", ClearLoadTestReducer),
+  __reducerSchema("decline_invite", DeclineInviteReducer),
   __reducerSchema("delete_product", DeleteProductReducer),
   __reducerSchema("delete_store", DeleteStoreReducer),
+  __reducerSchema("invite_staff", InviteStaffReducer),
   __reducerSchema("join_store", JoinStoreReducer),
   __reducerSchema("pin_store", PinStoreReducer),
   __reducerSchema("remove_item", RemoveItemReducer),
+  __reducerSchema("remove_staff", RemoveStaffReducer),
   __reducerSchema("reset_demo", ResetDemoReducer),
+  __reducerSchema("revoke_staff_invite", RevokeStaffInviteReducer),
   __reducerSchema("rotate_invite", RotateInviteReducer),
   __reducerSchema("seed_load_test", SeedLoadTestReducer),
+  __reducerSchema("set_auth_clients", SetAuthClientsReducer),
   __reducerSchema("set_bag", SetBagReducer),
+  __reducerSchema("set_display_name", SetDisplayNameReducer),
   __reducerSchema("set_payment", SetPaymentReducer),
+  __reducerSchema("sign_in", SignInReducer),
   __reducerSchema("update_location", UpdateLocationReducer),
   __reducerSchema("upsert_product", UpsertProductReducer),
   __reducerSchema("upsert_store", UpsertStoreReducer),
@@ -249,6 +318,7 @@ const reducersSchema = __reducers(
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */
 const proceduresSchema = __procedures(
+  __procedureSchema("server_time", ServerTimeProcedure.params, ServerTimeProcedure.returnType),
   __procedureSchema("shop_bag_line", ShopBagLineProcedure.params, ShopBagLineProcedure.returnType),
   __procedureSchema("shop_locate", ShopLocateProcedure.params, ShopLocateProcedure.returnType),
   __procedureSchema("shop_remove", ShopRemoveProcedure.params, ShopRemoveProcedure.returnType),

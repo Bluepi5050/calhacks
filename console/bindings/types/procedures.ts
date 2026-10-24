@@ -6,6 +6,7 @@
 import { type Infer as __Infer } from "spacetimedb";
 
 // Import all procedure arg schemas
+import * as ServerTimeProcedure from "../server_time_procedure";
 import * as ShopBagLineProcedure from "../shop_bag_line_procedure";
 import * as ShopLocateProcedure from "../shop_locate_procedure";
 import * as ShopRemoveProcedure from "../shop_remove_procedure";
@@ -13,6 +14,8 @@ import * as ShopSetBagProcedure from "../shop_set_bag_procedure";
 import * as ShopSetPaymentProcedure from "../shop_set_payment_procedure";
 import * as ShopStateProcedure from "../shop_state_procedure";
 
+export type ServerTimeArgs = __Infer<typeof ServerTimeProcedure.params>;
+export type ServerTimeResult = __Infer<typeof ServerTimeProcedure.returnType>;
 export type ShopBagLineArgs = __Infer<typeof ShopBagLineProcedure.params>;
 export type ShopBagLineResult = __Infer<typeof ShopBagLineProcedure.returnType>;
 export type ShopLocateArgs = __Infer<typeof ShopLocateProcedure.params>;

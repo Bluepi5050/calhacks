@@ -10,6 +10,48 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
+export const Account = __t.object("Account", {
+  identity: __t.identity(),
+  name: __t.string(),
+  email: __t.string(),
+  emailVerified: __t.bool(),
+  picture: __t.string(),
+  subject: __t.string(),
+  signedInAt: __t.timestamp(),
+});
+export type Account = __Infer<typeof Account>;
+
+export const AccountSummary = __t.object("AccountSummary", {
+  key: __t.string(),
+  signedIn: __t.bool(),
+  name: __t.string(),
+  email: __t.string(),
+  picture: __t.string(),
+  admin: __t.bool(),
+  shortId: __t.string(),
+});
+export type AccountSummary = __Infer<typeof AccountSummary>;
+
+export const Activity = __t.object("Activity", {
+  id: __t.u64(),
+  storeId: __t.string(),
+  actor: __t.identity(),
+  actorName: __t.string(),
+  action: __t.string(),
+  at: __t.timestamp(),
+});
+export type Activity = __Infer<typeof Activity>;
+
+export const ActivityRow = __t.object("ActivityRow", {
+  id: __t.u64(),
+  storeId: __t.string(),
+  actorName: __t.string(),
+  action: __t.string(),
+  isYou: __t.bool(),
+  at: __t.timestamp(),
+});
+export type ActivityRow = __Infer<typeof ActivityRow>;
+
 export const BagEvent = __t.object("BagEvent", {
   id: __t.u64(),
   shopper: __t.identity(),
@@ -75,8 +117,28 @@ export const Config = __t.object("Config", {
 });
 export type Config = __Infer<typeof Config>;
 
+export const InviteRow = __t.object("InviteRow", {
+  id: __t.u64(),
+  storeId: __t.string(),
+  storeName: __t.string(),
+  invitedBy: __t.string(),
+});
+export type InviteRow = __Infer<typeof InviteRow>;
+
+export const MemberName = __t.object("MemberName", {
+  identity: __t.identity(),
+  name: __t.string(),
+});
+export type MemberName = __Infer<typeof MemberName>;
+
+export const MyAccount = __t.object("MyAccount", {});
+export type MyAccount = __Infer<typeof MyAccount>;
+
 export const MyCart = __t.object("MyCart", {});
 export type MyCart = __Infer<typeof MyCart>;
+
+export const MyInvites = __t.object("MyInvites", {});
+export type MyInvites = __Infer<typeof MyInvites>;
 
 export const MyOrders = __t.object("MyOrders", {});
 export type MyOrders = __Infer<typeof MyOrders>;
@@ -84,8 +146,17 @@ export type MyOrders = __Infer<typeof MyOrders>;
 export const MyShopper = __t.object("MyShopper", {});
 export type MyShopper = __Infer<typeof MyShopper>;
 
+export const MyStoreActivity = __t.object("MyStoreActivity", {});
+export type MyStoreActivity = __Infer<typeof MyStoreActivity>;
+
+export const MyStorePeople = __t.object("MyStorePeople", {});
+export type MyStorePeople = __Infer<typeof MyStorePeople>;
+
 export const MyStores = __t.object("MyStores", {});
 export type MyStores = __Infer<typeof MyStores>;
+
+export const MyTeam = __t.object("MyTeam", {});
+export type MyTeam = __Infer<typeof MyTeam>;
 
 export const Operator = __t.object("Operator", {
   identity: __t.identity(),
@@ -103,6 +174,14 @@ export const OrderLine = __t.object("OrderLine", {
   qty: __t.u32(),
 });
 export type OrderLine = __Infer<typeof OrderLine>;
+
+export const PersonRow = __t.object("PersonRow", {
+  key: __t.string(),
+  storeId: __t.string(),
+  who: __t.identity(),
+  name: __t.string(),
+});
+export type PersonRow = __Infer<typeof PersonRow>;
 
 export const PricedLine = __t.object("PricedLine", {
   sku: __t.string(),
@@ -124,6 +203,12 @@ export const Product = __t.object("Product", {
   unit: __t.string(),
 });
 export type Product = __Infer<typeof Product>;
+
+export const Profile = __t.object("Profile", {
+  identity: __t.identity(),
+  name: __t.string(),
+});
+export type Profile = __Infer<typeof Profile>;
 
 export const Receipt = __t.object("Receipt", {
   orderId: __t.u64(),
@@ -184,6 +269,15 @@ export const Shopper = __t.object("Shopper", {
 });
 export type Shopper = __Infer<typeof Shopper>;
 
+export const StaffEmailInvite = __t.object("StaffEmailInvite", {
+  id: __t.u64(),
+  storeId: __t.string(),
+  email: __t.string(),
+  invitedBy: __t.string(),
+  at: __t.timestamp(),
+});
+export type StaffEmailInvite = __Infer<typeof StaffEmailInvite>;
+
 export const StaffStore = __t.object("StaffStore", {
   storeId: __t.string(),
   role: __t.string(),
@@ -208,10 +302,29 @@ export const StoreInvite = __t.object("StoreInvite", {
 });
 export type StoreInvite = __Infer<typeof StoreInvite>;
 
+export const StoreOwner = __t.object("StoreOwner", {
+  id: __t.u64(),
+  storeId: __t.string(),
+  identity: __t.identity(),
+});
+export type StoreOwner = __Infer<typeof StoreOwner>;
+
 export const StoreStaff = __t.object("StoreStaff", {
   id: __t.u64(),
   identity: __t.identity(),
   storeId: __t.string(),
 });
 export type StoreStaff = __Infer<typeof StoreStaff>;
+
+export const TeamRow = __t.object("TeamRow", {
+  key: __t.string(),
+  storeId: __t.string(),
+  kind: __t.string(),
+  name: __t.string(),
+  email: __t.string(),
+  member: __t.identity(),
+  inviteId: __t.u64(),
+  isYou: __t.bool(),
+});
+export type TeamRow = __Infer<typeof TeamRow>;
 
