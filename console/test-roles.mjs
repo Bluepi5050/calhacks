@@ -1,0 +1,24 @@
+
+import { DbConnection } from './dist/stdb-client.mjs';
+const mk = () => new Promise((res, rej) => DbConnection.builder().withUri('https://maincloud.spacetimedb.com').withDatabaseName('smartcart-5dt35').onConnect((cn, id) => res([cn, id])).onConnectError((x, e) => rej(e)).build());
+const sub = (c, q) => new Promise((res) => c.subscriptionBuilder().onApplied(res).subscribe(q));
+const tryit = async (label, p) => { try { await p; console.log(label, 'OK'); } catch (e) { console.log(label, 'DENIED:', String(e.message || e)); } };
+const [A, aid] = await mk(); const [B, bid] = await mk();
+await sub(A, ['SELECT * FROM my_stores', 'SELECT * FROM store', 'SELECT * FROM my_team']); await sub(B, ['SELECT * FROM my_stores', 'SELECT * FROM my_team']);
+await A.reducers.pinStore({ name: 'Role Test Mart', lat: 10.123, lng: 20.456 });
+await new Promise((r) => setTimeout(r, 800));
+const mine = [...A.db.myStores.iter()][0];
+console.log('A role', mine.role);
+await tryit('B join', B.reducers.joinStore({ code: mine.inviteCode }));
+await new Promise((r) => setTimeout(r, 600));
+console.log('B role', [...B.db.myStores.iter()].map((x) => x.role).join(','));
+console.log('A team', [...A.db.myTeam.iter()].map((t) => t.kind + ':' + t.name).join(' | '));
+await tryit('B deleteStore', B.reducers.deleteStore({ id: mine.storeId }));
+await tryit('B rotateInvite', B.reducers.rotateInvite({ storeId: mine.storeId }));
+await tryit('B resetDemo', B.reducers.resetDemo({ storeId: mine.storeId }));
+await tryit('B remove owner A', B.reducers.removeStaff({ storeId: mine.storeId, member: aid }));
+await tryit('B upsertProduct (staff ok)', B.reducers.upsertProduct({ storeId: mine.storeId, sku: '9001', name: 'Test item', priceCents: 100, unit: 'each' }));
+await tryit('A leave (owner)', A.reducers.removeStaff({ storeId: mine.storeId, member: aid }));
+await tryit('B leave (staff)', B.reducers.removeStaff({ storeId: mine.storeId, member: bid }));
+await tryit('A deleteStore', A.reducers.deleteStore({ id: mine.storeId }));
+A.disconnect(); B.disconnect(); process.exit(0);
