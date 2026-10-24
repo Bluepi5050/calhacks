@@ -1,0 +1,1 @@
+"""SmartCart camera scanning implementation."""

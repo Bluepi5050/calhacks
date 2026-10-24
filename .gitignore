@@ -237,6 +237,9 @@ node_modules/
 runs/
 datasets/
 *.pt
+*.onnx
+*.engine
+hardware/models/
 
 # Operating system
 .DS_Store
