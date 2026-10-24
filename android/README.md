@@ -1,0 +1,36 @@
+# Bag It for Android (SmartBag 3.2)
+
+The app is called **Bag It** on the phone (launcher, notifications, in-app wordmark); `SmartBag` stays only in machine ids (package `space.mana.smartbag`, BLE name `SmartBag-01`, database). Native customer app (Kotlin, Jetpack Compose, minSdk 26). Customer-only: no store picker, catalog or admin controls.
+
+- **`Api.kt`**: a hand-written client for SpacetimeDB's v2 binary WebSocket protocol (BSATN). One persistent socket; each action is a `CallProcedure` that returns the shopper's freshly priced bag. No HTTP per action, no subscriptions.
+- **`BagLink.kt`**: BLE central for the bag (Nordic UART Service), auto-connect, MTU 185, ordered ack queue.
+- **`ShopModel.kt`**: app-wide session; bag lines and fixes go to the database strictly in order.
+- **`WatchService.kt`**: foreground service (location + connected device) so walking out is detected with the phone in a pocket.
+- **`UI.kt`** (3.1 redesign): the Bag It design system (zinc neutrals, one coral accent that only means the bag's light / money moving, ink pill buttons, hairlines, 4 type sizes / 2 weights, tabular figures) and every screen: Welcome with per-permission recovery (incl. Approximate location), one state-driven shop screen (finding store, location off, offline, not in a store + nearest store + last trip, bag problems, empty, filling, not sold here, leaving), and the receipt. No Pay button: a coral line on the bottom bar is half drawn while you leave and completes on the receipt when the database charges, then the slot of the bag mark lights with a confirm haptic. Dark theme, TalkBack labels and announcements, 200% font layouts, reduced motion.
+
+- **3.2: accounts and pages.** Signed out: Welcome, Create account, Log in (`AuthUI.kt`). After sign-up, setup steps with a step bar: permissions, **Pair your bag** (`PairUI.kt`: live list of nearby bags with signal words, the bag blinks when the phone says `HELLO` and the screen's mark blinks with it, name it; or use a demo bag), **Add a card** (`WalletUI.kt`). Then four tabs (`TabsUI.kt`): Shop (the approved screen; the dock's card line opens a card picker, no card / no bag states), Trips (receipts by day), Wallet (several cards, default, remove), Account (bags, permissions, sign out, delete account). The walk-out receipt still completes the coral line in place, then settles to the 3.1 bar height.
+- **Card data:** the card number and security code are checked on the phone (`Cards.kt`: brand, Luhn, length, expiry, CVC) and never sent or saved; only brand, last four digits, expiry and nickname go to the database (`card_add`). Passwords go only over the TLS socket and are never stored; the phone keeps its identity token plus a cached account state. Card and login screens use `FLAG_SECURE`; app backup is off.
+- **Bag pairing protocol:** lines from the bag starting with `BAG ` (e.g. `BAG SmartBag-3F2A fw2`, the reply to `HELLO`) are control lines and never reach `shop_bag_line`. Auto-connect only accepts the account's paired bags (any bag when none are paired).
+
+Hidden demo aids: long-press the bag status to drop in a random item; long-press the store name to simulate walking out.
+
+## Build
+Open `android/` in Android Studio, or headless:
+```bash
+tools/setup.sh   # JDK 17, Android SDK 34, Gradle 8.7 (Linux)
+tools/build.sh   # -> android/app/build/outputs/apk/release/app-release.apk
+```
+Point at another database with `-PstdbHost=https://… -PstdbDb=…`.
+
+## Screenshots
+`app/src/test/.../ScreenshotTest.kt` renders every key state with Robolectric native graphics + Roborazzi (no emulator) at 411/360 dp, font scale 1.0/2.0, light and dark:
+```bash
+./gradlew testDebugUnitTest --tests '*ScreenshotTest*' -PshotsDir=/tmp/shots
+```
+
+## Test
+- `WalkOutTest.kt` runs the real `Api` client against the live database through a full trip (enter, dedupe a tag, walk out, check the charge).
+- `AccountFlowTest.kt` (live): sign up a fresh test account, add the demo card, pair a bag, walk out of Bayside Grocer charged to the card, Trips, second card + default switch, sign out, sign in, delete. Every AccountState / Receipt[] reply is decoded and re-encoded byte for byte.
+- `CardsTest.kt` (offline): card validation, labels, error cleaning, control lines, setup steps, codecs.
+
+`./gradlew testDebugUnitTest`
