@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Bag It — SmartBag device + app. Just walk out.</title>
+<meta name="description" content="Bag It pairs a Bluetooth smart bag with the SmartBag app. Fill the bag, walk out of a participating store, and get a receipt. Prototype: payments are simulated.">
+<meta name="theme-color" content="#F7F4EE">
+<meta property="og:title" content="Bag It — Your groceries. Your bag. Just walk out.">
+<meta property="og:description" content="A smart bag and phone app that total your groceries when you leave a participating store. Prototype from Cal Hacks 13.0; payments are simulated.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231C1D19'/%3E%3Cpath d='M8.5 12h15l-1.1 11.2a1 1 0 0 1-1 .8h-10.8a1 1 0 0 1-1-.8z' fill='none' stroke='%23FFFDF9' stroke-width='1.6'/%3E%3Cpath d='M13 17.5h6m-2-2 2 2-2 2' fill='none' stroke='%23E8654A' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+:root{--bg:#F7F4EE;--paper:#FFFDF9;--sunk:#F1ECE3;--ink:#1C1D19;--ink2:#34352F;--muted:#5C5D57;--faint:#85867F;--line:#E3DED4;--line2:#D2CBBE;--coral:#E8654A;--coral-ink:#B4452D;--coral-wash:#FBEAE4;--serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Charter,"Bitstream Charter",Georgia,serif;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,"Helvetica Neue",Arial,sans-serif;--mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;--wrap:1160px;--pad:clamp(20px,4.5vw,44px);--head:64px}
+*,*::before,*::after{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 var(--sans);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;overflow-x:hidden}
+img,svg{display:block;max-width:100%}
+a{color:inherit}
+p{margin:0 0 1em}
+h1,h2,h3{font-family:var(--serif);font-weight:500;letter-spacing:-.015em;margin:0;color:var(--ink)}
+h3{font-family:var(--sans);font-weight:600;font-size:17px;letter-spacing:-.005em;line-height:1.35}
+:focus-visible{outline:2px solid var(--coral);outline-offset:3px;border-radius:6px}
+.wrap{max-width:var(--wrap);margin:0 auto;padding:0 var(--pad)}
+.skip{position:absolute;left:-9999px;top:8px;background:var(--ink);color:#fff;padding:8px 14px;border-radius:999px;z-index:50;text-decoration:none}
+.skip:focus{left:12px}
+.eyebrow{font:500 11.5px/1.2 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+.notice{border-bottom:1px solid var(--line);background:var(--paper);font-size:13px;color:var(--muted)}
+.notice .wrap{display:flex;gap:10px;align-items:center;min-height:38px;padding-top:8px;padding-bottom:8px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--coral);flex:none}
+header.top{position:sticky;top:0;z-index:20;background:rgba(247,244,238,.88);-webkit-backdrop-filter:saturate(1.4) blur(12px);backdrop-filter:saturate(1.4) blur(12px);border-bottom:1px solid var(--line)}
+.bar{display:flex;align-items:center;gap:24px;height:var(--head)}
+.brand{display:flex;align-items:center;gap:11px;text-decoration:none;margin-right:auto;min-width:0}
+.brand svg{width:30px;height:30px;flex:none}
+.brand b{font:600 18px/1 var(--serif);letter-spacing:-.01em}
+.brand small{display:block;font:500 10.5px/1.2 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin-top:4px;white-space:nowrap}
+nav.links{display:flex;gap:22px;font-size:14px}
+nav.links a{text-decoration:none;color:var(--muted);padding:6px 0}
+nav.links a:hover{color:var(--ink)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;height:44px;padding:0 20px;border-radius:999px;font:500 14.5px/1 var(--sans);text-decoration:none;border:1px solid transparent;cursor:pointer;white-space:nowrap;transition:background-color .15s,border-color .15s,transform .15s}
+.btn svg{width:16px;height:16px}
+.btn-primary{background:var(--ink);color:#FFFDF9}
+.btn-primary:hover{background:#000}
+.btn-ghost{border-color:var(--line2);color:var(--ink);background:transparent}
+.btn-ghost:hover{background:var(--paper);border-color:var(--faint)}
+.btn-sm{height:36px;padding:0 15px;font-size:13.5px}
+.menu-btn{display:none;height:36px;padding:0 14px;border-radius:999px;border:1px solid var(--line2);background:transparent;font:500 13.5px var(--sans);color:var(--ink);cursor:pointer}
+.mobile-nav{display:none}
+@media (max-width:900px){nav.links,.bar .btn-download{display:none}.menu-btn{display:inline-flex;align-items:center}
+.mobile-nav[data-open="true"]{display:block;position:absolute;left:0;right:0;top:100%;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--bg);box-shadow:0 18px 30px -18px rgba(28,29,25,.25);max-height:calc(100vh - var(--head));overflow:auto}
+.mobile-nav ul{list-style:none;margin:0;padding:8px var(--pad) 16px}
+.mobile-nav li a{display:block;padding:12px 0;border-bottom:1px solid var(--line);text-decoration:none;font-size:16px}
+.mobile-nav li:last-child a{border-bottom:0}}
+section{scroll-margin-top:calc(var(--head) + 8px)}
+.hero{padding:clamp(48px,8vw,96px) 0 clamp(56px,8vw,104px)}
+.hero-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.08fr);gap:clamp(36px,5vw,72px);align-items:center}
+.hero h1{font-size:clamp(42px,6.2vw,76px);line-height:1.02;letter-spacing:-.03em;margin:18px 0 24px}
+.hero h1 span{display:block}
+.hero h1 em{font-style:italic;color:var(--coral-ink)}
+.lede{font-size:clamp(17px,1.6vw,19px);line-height:1.6;color:var(--ink2);max-width:34em}
+.cta{display:flex;flex-wrap:wrap;gap:12px;margin:30px 0 22px}
+.meta{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13px;color:var(--muted);padding:0;margin:0;list-style:none}
+.meta li{display:flex;align-items:center;gap:8px}
+.meta li::before{content:"";width:4px;height:4px;border-radius:50%;background:var(--line2)}
+.figure{margin:0}
+.panel{position:relative;border:1px solid var(--line);border-radius:22px;background:var(--paper);background-image:radial-gradient(circle at 1px 1px,rgba(28,29,25,.075) 1px,transparent 0);background-size:18px 18px;overflow:hidden}
+.panel svg{width:100%;height:auto}
+.legend{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--line);background:var(--paper)}
+.legend div{padding:14px 16px;font-size:13px;line-height:1.45;color:var(--muted)}
+.legend div+div{border-left:1px solid var(--line)}
+.legend b{display:block;font:500 11px/1.2 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink);margin-bottom:5px}
+figcaption{margin-top:10px;font-size:12px;color:var(--faint)}
+.flow{stroke-dasharray:3 7;animation:flow 1.1s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-20}}
+.led{animation:led 2.4s ease-in-out infinite}
+@keyframes led{0%,100%{opacity:1}50%{opacity:.25}}
+.row-in{animation:rowin 6s ease-in-out infinite}
+@keyframes rowin{0%,15%{opacity:0}25%,100%{opacity:1}}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}.flow,.led,.row-in{animation:none}.btn{transition:none}}
+.sec{padding:clamp(64px,9vw,112px) 0;border-top:1px solid var(--line)}
+.sec-alt{background:var(--paper)}
+.sec-head{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:24px clamp(32px,5vw,72px);align-items:end;margin-bottom:clamp(36px,5vw,56px)}
+.sec-head h2{font-size:clamp(32px,4.2vw,50px);line-height:1.06;margin-top:14px}
+.sec-head p{color:var(--muted);font-size:17px;margin:0;max-width:36em}
+.steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;counter-reset:s;border-top:1px solid var(--ink)}
+.step{padding:26px 28px 6px 0}
+.step+.step{padding-left:28px;border-left:1px solid var(--line)}
+.step .n{font:500 12px/1 var(--mono);letter-spacing:.12em;color:var(--coral-ink)}
+.step h3{font:500 28px/1.1 var(--serif);letter-spacing:-.015em;margin:14px 0 12px}
+.step p{color:var(--muted);font-size:15.5px}
+.two{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:clamp(32px,5vw,72px);align-items:start}
+.label{font:600 13px/1.3 var(--sans);margin:0 0 14px;color:var(--ink)}
+.platforms{border:1px solid var(--line);border-radius:18px;background:var(--paper);overflow:hidden}
+.sec-alt .platforms{background:var(--bg)}
+.plat{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 16px;padding:18px 20px;align-items:center}
+.plat+.plat{border-top:1px solid var(--line)}
+.plat h3{font-size:16px}
+.plat h3 span{font:500 11px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-left:8px}
+.plat p{grid-column:1/-1;margin:0;font-size:14px;color:var(--muted)}
+.tag{display:inline-block;font:500 11px/1 var(--mono);letter-spacing:.06em;padding:5px 8px;border-radius:6px;background:var(--sunk);color:var(--ink2)}
+.tag-coral{background:var(--coral-wash);color:var(--coral-ink)}
+.checklist{list-style:none;padding:0;margin:26px 0 0}
+.checklist li{position:relative;padding:0 0 12px 28px;font-size:15px;color:var(--ink2)}
+.checklist li::before{content:"";position:absolute;left:2px;top:6px;width:13px;height:13px;border:1.5px solid var(--line2);border-radius:4px}
+.olist{list-style:none;counter-reset:o;padding:0;margin:0}
+.olist>li{counter-increment:o;position:relative;padding:0 0 26px 52px}
+.olist>li::before{content:counter(o,decimal-leading-zero);position:absolute;left:0;top:1px;font:500 12px/1 var(--mono);letter-spacing:.08em;color:var(--coral-ink);width:34px;height:24px;display:flex;align-items:center;border-top:1px solid var(--coral)}
+.olist>li:not(:last-child)::after{content:"";position:absolute;left:0;top:34px;bottom:8px;width:1px;background:var(--line)}
+.olist h3{margin-bottom:6px}
+.olist p{margin:0;color:var(--muted);font-size:15px}
+.olist p+p{margin-top:8px}
+.path{font:500 13px/1.5 var(--mono);color:var(--ink2);background:var(--sunk);padding:1px 6px;border-radius:5px;white-space:normal}
+.note{margin-top:10px;font-size:13.5px;color:var(--muted);border-left:2px solid var(--coral);padding:2px 0 2px 12px}
+.shop{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr);gap:clamp(32px,5vw,72px);align-items:start}
+.facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:30px 36px}
+.facts h3{margin-bottom:8px}
+.facts p{margin:0;color:var(--muted);font-size:15px}
+.timeline{margin-top:44px;border-top:1px solid var(--line);padding-top:26px}
+.tl{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px;margin-top:18px;position:relative}
+.tl::before{content:"";position:absolute;left:6px;right:6px;top:6px;height:1px;background:var(--line2)}
+.tl div{position:relative;padding-top:24px;font-size:14px;color:var(--muted);line-height:1.5}
+.tl div::before{content:"";position:absolute;left:0;top:0;width:13px;height:13px;border-radius:50%;background:var(--bg);border:1.5px solid var(--ink)}
+.tl div:last-child::before{background:var(--coral);border-color:var(--coral)}
+.tl b{display:block;color:var(--ink);font-weight:600;margin-bottom:3px}
+.receipt{font:13px/1.7 var(--mono);background:#fff;border:1px solid var(--line);border-radius:14px 14px 4px 4px;padding:24px 24px 30px;color:var(--ink2);position:relative;box-shadow:0 1px 0 var(--line)}
+.receipt::after{content:"";position:absolute;left:0;right:0;bottom:-9px;height:10px;background:linear-gradient(-45deg,transparent 6px,#fff 0) 0 0/12px 10px repeat-x,linear-gradient(45deg,transparent 6px,#fff 0) 0 0/12px 10px repeat-x}
+.receipt .r-h{font:600 15px/1.3 var(--sans);color:var(--ink);margin-bottom:2px}
+.receipt .r-row{display:flex;justify-content:space-between;gap:12px}
+.receipt .r-row span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.receipt hr{border:0;border-top:1px dashed var(--line2);margin:12px 0}
+.receipt .muted{color:var(--faint)}
+.receipt .strike{color:var(--faint);text-decoration:line-through}
+.receipt .tot{font-weight:600;color:var(--ink);font-size:14px}
+.receipt .paid{display:inline-flex;align-items:center;gap:7px;margin-top:12px;color:var(--coral-ink);font-weight:600}
+.cap{font-size:12px;color:var(--faint);margin-top:18px}
+.ops{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;border-top:1px solid var(--ink)}
+.op{padding:24px 24px 4px 0}
+.op+.op{padding-left:24px;border-left:1px solid var(--line)}
+.op .eyebrow{color:var(--coral-ink)}
+.op h3{margin:12px 0 8px}
+.op p{font-size:14.5px;color:var(--muted)}
+.ops-foot{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:clamp(28px,5vw,64px);margin-top:44px;padding-top:30px;border-top:1px solid var(--line)}
+.ops-foot ul{margin:0;padding-left:18px;color:var(--ink2);font-size:15px}
+.ops-foot li{margin-bottom:8px}
+.faq{border-top:1px solid var(--ink);max-width:880px}
+.faq details{border-bottom:1px solid var(--line)}
+.faq summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;gap:20px;align-items:center;padding:20px 2px;font:500 17px/1.4 var(--sans);color:var(--ink)}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary .pm{flex:none;width:28px;height:28px;border:1px solid var(--line2);border-radius:50%;position:relative;transition:transform .2s}
+.faq summary .pm::before,.faq summary .pm::after{content:"";position:absolute;left:50%;top:50%;width:10px;height:1.5px;background:var(--ink);transform:translate(-50%,-50%)}
+.faq summary .pm::after{transform:translate(-50%,-50%) rotate(90deg);transition:opacity .2s}
+.faq details[open] summary .pm{transform:rotate(180deg)}
+.faq details[open] summary .pm::after{opacity:0}
+.faq summary:hover .pm{border-color:var(--faint)}
+.faq .a{padding:0 48px 22px 2px;color:var(--muted);font-size:15.5px}
+.faq .a ul{margin:0;padding-left:18px}
+.faq .a li{margin-bottom:6px}
+.faq-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2.2fr);gap:clamp(32px,5vw,72px)}
+.warn{border:1px solid #EDC7BB;background:var(--coral-wash);border-radius:16px;padding:20px 22px;margin-bottom:40px;display:flex;gap:14px;align-items:flex-start}
+.warn svg{flex:none;width:20px;height:20px;margin-top:2px}
+.warn p{margin:0;color:#5A2A1E;font-size:15.5px}
+.warn b{color:#3E1A10}
+.cols{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(28px,4vw,56px)}
+.cols ul{margin:0;padding-left:18px;color:var(--ink2);font-size:15px}
+.cols li{margin-bottom:9px}
+.tech{margin-top:48px;border:1px solid var(--line);border-radius:16px;background:var(--bg)}
+.tech summary{cursor:pointer;padding:16px 20px;font:500 14px var(--sans);color:var(--ink2);list-style:none;display:flex;justify-content:space-between;gap:12px}
+.tech summary::-webkit-details-marker{display:none}
+.tech summary::after{content:"Show";font:500 11px/1.8 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+.tech[open] summary::after{content:"Hide"}
+.tech .body{padding:0 20px 20px;font-size:14px;color:var(--muted)}
+.tech .body ul{margin:0 0 14px;padding-left:18px}
+.tech .dl{display:flex;flex-wrap:wrap;gap:10px}
+footer{border-top:1px solid var(--line);padding:40px 0 48px;font-size:13.5px;color:var(--muted)}
+footer .wrap{display:flex;flex-wrap:wrap;gap:16px 32px;justify-content:space-between;align-items:flex-start}
+footer nav{display:flex;flex-wrap:wrap;gap:8px 20px}
+footer nav a{text-decoration:none}
+footer nav a:hover{color:var(--ink)}
+@media (max-width:1000px){.ops{grid-template-columns:repeat(2,minmax(0,1fr))}.op:nth-child(3){padding-left:0;border-left:0}.op:nth-child(n+3){border-top:1px solid var(--line)}}
+@media (max-width:900px){.hero-grid,.sec-head,.two,.shop,.faq-grid,.ops-foot{grid-template-columns:minmax(0,1fr)}.cols{grid-template-columns:minmax(0,1fr)}.sec-head{align-items:start}}
+@media (max-width:760px){.steps{grid-template-columns:minmax(0,1fr)}.step,.step+.step{padding:22px 0 4px;border-left:0}.step+.step{border-top:1px solid var(--line)}
+.facts{grid-template-columns:minmax(0,1fr)}.tl{grid-template-columns:minmax(0,1fr);gap:0}.tl::before{left:6px;right:auto;top:6px;bottom:6px;width:1px;height:auto}.tl div{padding:0 0 18px 28px}
+.ops{grid-template-columns:minmax(0,1fr)}.op,.op+.op{padding:20px 0 2px;border-left:0}.op+.op{border-top:1px solid var(--line)}
+.legend{grid-template-columns:minmax(0,1fr)}.legend div+div{border-left:0;border-top:1px solid var(--line)}
+.faq .a{padding-right:4px}.brand small{display:none}}
+@media (max-width:420px){.cta .btn{width:100%}.hero h1{font-size:40px}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="notice"><div class="wrap"><span class="dot" aria-hidden="true"></span><span><b>Prototype.</b> Payments are simulated and no card is ever charged. Please use test data only.</span></div></div>
+<header class="top">
+<div class="wrap bar">
+<a class="brand" href="#top" aria-label="Bag It, home"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x=".5" y=".5" width="31" height="31" rx="8" fill="#1C1D19"/><path d="M8.5 12h15l-1.1 11.2a1 1 0 0 1-1 .8h-10.8a1 1 0 0 1-1-.8z" fill="none" stroke="#FFFDF9" stroke-width="1.6" stroke-linejoin="round"/><path d="M12.5 12v-1.5a3.5 3.5 0 0 1 7 0V12" fill="none" stroke="#FFFDF9" stroke-opacity=".5" stroke-width="1.6" stroke-linecap="round"/><path d="M13 17.5h6m-2-2 2 2-2 2" fill="none" stroke="#E8654A" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span><b>Bag It</b><small>SmartBag device + app</small></span></a>
+<nav class="links" aria-label="Primary">
+<a href="#how">How it works</a><a href="#start">Get started</a><a href="#shopping">Shopping</a><a href="#stores">For stores</a><a href="#faq">Help</a><a href="#privacy">Privacy</a>
+</nav>
+<a class="btn btn-primary btn-sm btn-download" href="#start">Get the app</a>
+<button class="menu-btn" type="button" aria-expanded="false" aria-controls="mnav">Menu</button>
+</div>
+<nav class="mobile-nav" id="mnav" aria-label="Mobile" data-open="false">
+<ul><li><a href="#how">How it works</a></li><li><a href="#start">Get started</a></li><li><a href="#shopping">Shopping &amp; receipts</a></li><li><a href="#stores">For stores</a></li><li><a href="#faq">Help &amp; FAQ</a></li><li><a href="#privacy">Privacy &amp; limitations</a></li></ul>
+</nav>
+</header>
+
+<main id="main">
+<section class="hero" id="top">
+<div class="wrap hero-grid">
+<div>
+<div class="eyebrow">SmartBag device + app</div>
+<h1><span>Your groceries.</span><span>Your bag.</span><span><em>Just walk out.</em></span></h1>
+<p class="lede">Bag It pairs a Bluetooth smart bag with the SmartBag phone app. Everything you put in the bag lands on your list. When you leave a participating store, the bag is totalled and your receipt appears. No checkout line, no Pay button.</p>
+<div class="cta">
+<a class="btn btn-primary" href="./downloads/SmartBag-3.0.apk" download><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5v8m-3.5-3.5L8 10.5 11.5 7M3 13.5h10"/></svg>Download for Android</a>
+<a class="btn btn-ghost" href="#how">See how it works</a>
+</div>
+<ul class="meta"><li>Android app 3.0 · APK, 6.6 MB</li><li>iPhone: source build only</li><li>Participating stores only</li></ul>
+</div>
+<figure class="figure">
+<div class="panel">
+<svg viewBox="0 0 660 400" role="img" aria-labelledby="dg-t dg-d">
+<title id="dg-t">Illustration: bag to phone to receipt</title>
+<desc id="dg-d">A grocery bag sends the items placed in it to a phone over Bluetooth. After the shopper walks out of the store, the phone shows a receipt marked paid (demo).</desc>
+<g fill="rgba(28,29,25,.07)"><ellipse cx="130" cy="338" rx="72" ry="8"/><ellipse cx="346" cy="340" rx="58" ry="7"/><ellipse cx="552" cy="322" rx="62" ry="7"/></g>
+<path d="M98 152V128a32 32 0 0 1 64 0v24" fill="none" stroke="rgba(28,29,25,.42)" stroke-width="2.4" stroke-linecap="round"/>
+<g stroke="#1C1D19" stroke-width="1.6" stroke-linejoin="round">
+<rect x="92" y="94" width="18" height="74" rx="9" transform="rotate(-14 101 131)" fill="#F0E2C8"/>
+<path d="M118 150v-30l12-10 12 10v30z" fill="#FFFDF9"/><path d="M118 120h24" fill="none"/>
+<path d="M150 150c-6-24 2-46 18-56 3 22-3 42-18 56z" fill="#DDE5D2"/><path d="M151 148c3-14 8-28 15-40" fill="none" stroke-width="1.2"/>
+</g>
+<path d="M66 150h128l-10 168a10 10 0 0 1-10 9H86a10 10 0 0 1-10-9z" fill="#FBF7F0" stroke="#1C1D19" stroke-width="2" stroke-linejoin="round"/>
+<path d="M70 176h120" stroke="#D2CBBE" stroke-width="1.2"/>
+<rect x="106" y="226" width="48" height="28" rx="7" fill="#fff" stroke="#1C1D19" stroke-width="1.6"/>
+<circle class="led" cx="119" cy="240" r="3.6" fill="#E8654A"/>
+<path d="M129 236h16M129 244h11" stroke="#85867F" stroke-width="1.6" stroke-linecap="round"/>
+<path class="flow" d="M198 240c30 0 50-26 82-26" fill="none" stroke="#E8654A" stroke-width="2.2" stroke-linecap="round"/>
+<text x="239" y="206" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="9.5" letter-spacing="1" fill="#85867F">BLUETOOTH</text>
+<g transform="translate(20 0)"><rect x="262" y="72" width="128" height="258" rx="22" fill="#fff" stroke="#1C1D19" stroke-width="2"/>
+<rect x="306" y="84" width="40" height="5" rx="2.5" fill="#D2CBBE"/>
+<g font-family="-apple-system,Segoe UI,Roboto,Arial,sans-serif">
+<text x="278" y="116" font-size="12" font-weight="600" fill="#1C1D19">Bayside Grocer</text>
+<circle cx="281" cy="128" r="3" fill="#1f9d63"/><text x="289" y="131.5" font-size="9.5" fill="#85867F">In store</text>
+</g>
+<g font-family="ui-monospace,Menlo,monospace" font-size="9.5" fill="#34352F">
+<path d="M278 144h96M278 170h96M278 196h96M278 222h96" stroke="#ECE7DE"/>
+<rect x="278" y="153" width="50" height="7" rx="3.5" fill="#E3DED4"/><text x="374" y="160" text-anchor="end">4.69</text>
+<rect x="278" y="179" width="38" height="7" rx="3.5" fill="#E3DED4"/><text x="374" y="186" text-anchor="end">2.99</text>
+<g class="row-in"><rect x="278" y="205" width="56" height="7" rx="3.5" fill="#E3DED4"/><text x="374" y="212" text-anchor="end">3.50</text></g>
+<text x="278" y="246" font-family="-apple-system,Segoe UI,Roboto,Arial,sans-serif" font-size="10.5" fill="#85867F">Total</text><text x="374" y="246" text-anchor="end" font-weight="700" fill="#1C1D19">$11.18</text>
+</g>
+<rect x="276" y="288" width="100" height="28" rx="14" fill="#1C1D19"/>
+<text x="326" y="306" text-anchor="middle" font-family="-apple-system,Segoe UI,Roboto,Arial,sans-serif" font-size="10.5" font-weight="500" fill="#FFFDF9">Just walk out</text></g>
+<path class="flow" d="M414 214c24 0 40-18 64-18" fill="none" stroke="#E8654A" stroke-width="2.2" stroke-linecap="round"/>
+<text x="446" y="186" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="9.5" letter-spacing="1" fill="#85867F">WALK OUT</text>
+<g transform="translate(28 0) rotate(3 522 200)">
+<path d="M452 100 a8 8 0 0 1 8 -8 H584 a8 8 0 0 1 8 8 V300 l-10 8 l-10 -8 l-10 8 l-10 -8 l-10 8 l-10 -8 l-10 8 l-10 -8 l-10 8 l-10 -8 l-10 8 l-10 -8 l-10 8 l-10 -8 Z" fill="#fff" stroke="#1C1D19" stroke-width="2" stroke-linejoin="round"/>
+<text x="468" y="122" font-family="-apple-system,Segoe UI,Roboto,Arial,sans-serif" font-size="12.5" font-weight="600" fill="#1C1D19">Receipt</text>
+<text x="468" y="138" font-family="ui-monospace,Menlo,monospace" font-size="9.5" letter-spacing="1" fill="#85867F">7KQ2XD</text>
+<g font-family="ui-monospace,Menlo,monospace" font-size="9.5" fill="#34352F">
+<rect x="468" y="157" width="46" height="6" rx="3" fill="#E3DED4"/><text x="576" y="163" text-anchor="end">4.69</text>
+<rect x="468" y="177" width="34" height="6" rx="3" fill="#E3DED4"/><text x="576" y="183" text-anchor="end">2.99</text>
+<rect x="468" y="197" width="52" height="6" rx="3" fill="#E3DED4"/><text x="576" y="203" text-anchor="end">3.50</text>
+<path d="M468 220h108" stroke="#D2CBBE" stroke-dasharray="3 3"/>
+<text x="468" y="242" font-family="-apple-system,Segoe UI,Roboto,Arial,sans-serif" font-size="10.5" fill="#85867F">Total</text><text x="576" y="242" text-anchor="end" font-weight="700" fill="#1C1D19">$11.18</text>
+</g>
+<circle cx="480" cy="272" r="10" fill="#E8654A"/><path d="m475.5 272 3 3 6-6.5" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="497" y="276" font-family="-apple-system,Segoe UI,Roboto,Arial,sans-serif" font-size="11" font-weight="600" fill="#B4452D">Paid · demo</text>
+</g>
+</svg>
+<div class="legend"><div><b>Bag</b>Reports each item you add or remove.</div><div><b>Phone</b>Recognises the store and keeps your list.</div><div><b>Receipt</b>Arrives after you walk out.</div></div>
+</div>
+<figcaption>Illustration of the flow, not a product photograph. Prices are example data.</figcaption>
+</figure>
+</div>
+</section>
+
+<section class="sec" id="how" aria-labelledby="how-h">
+<div class="wrap">
+<div class="sec-head"><div><div class="eyebrow">01 · How it works</div><h2 id="how-h">Three steps, no checkout.</h2></div><p>The bag knows what’s inside it, your phone knows which store you’re in, and the store’s catalog knows the prices. Leaving the store is the only “checkout” you do.</p></div>
+<div class="steps">
+<div class="step"><div class="n">STEP 1</div><h3>Connect</h3><p>Switch on your SmartBag and open the app. The phone pairs with the bag over Bluetooth and, once you’re inside a participating store, shows the store’s name.</p></div>
+<div class="step"><div class="n">STEP 2</div><h3>Fill</h3><p>Shop as usual and put items straight into the bag. Each one appears on your list with the store’s price. Take something out and it comes off the list.</p></div>
+<div class="step"><div class="n">STEP 3</div><h3>Leave</h3><p>Walk out. Once your phone is clearly outside the store area, the bag is totalled, a receipt opens in the app, you get a notification and the bag’s light blinks to confirm.</p></div>
+</div>
+</div>
+</section>
+
+<section class="sec sec-alt" id="start" aria-labelledby="start-h">
+<div class="wrap">
+<div class="sec-head"><div><div class="eyebrow">02 · Get started</div><h2 id="start-h">Set up once, in about five minutes.</h2></div><p>Install the app, grant the permissions it needs to see your bag and your location, and keep it running while you shop.</p></div>
+<div class="two">
+<div>
+<p class="label">Platforms</p>
+<div class="platforms">
+<div class="plat"><h3>Android<span>v3.0</span></h3><a class="btn btn-primary btn-sm" href="./downloads/SmartBag-3.0.apk" download><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5v8m-3.5-3.5L8 10.5 11.5 7M3 13.5h10"/></svg>APK · 6.6 MB</a><p>Installable APK for Android 8.0 or newer. Not yet tested end to end on a physical phone with the bag.</p></div>
+<div class="plat"><h3>iPhone<span>source</span></h3><a class="btn btn-ghost btn-sm" href="./downloads/SmartBag-iOS-source-1.0.zip" download>Source · ZIP</a><p>Build it yourself on a Mac with Xcode 15+ for iOS 16+. No App Store or TestFlight release. Not yet tested on a device.</p></div>
+<div class="plat"><h3>SmartBag<span>device</span></h3><span class="tag">Prototype</span><p>ESP32-based bag that talks Bluetooth Low Energy and appears as <b>SmartBag-01</b>.</p></div>
+</div>
+<ul class="checklist" aria-label="Before you start">
+<li>An Android phone with Bluetooth and GPS</li>
+<li>Mobile data or Wi‑Fi while you shop</li>
+<li>A SmartBag that is switched on and powered</li>
+<li>A participating store</li>
+</ul>
+</div>
+<ol class="olist">
+<li><h3>Download the APK</h3><p>On your Android phone, tap <b>Download for Android</b> on this page and open the file when it finishes.</p></li>
+<li><h3>Allow the install</h3><p>Android asks before installing apps from outside Google Play. Allow it for your browser or file manager, then tap <b>Install</b>.</p><p class="note">Usually under <span class="path">Settings › Apps › Special app access › Install unknown apps</span>. Wording varies by manufacturer.</p></li>
+<li><h3>Open SmartBag and tap Get started</h3><p>No account or sign-up is needed. The app creates its own anonymous identity.</p></li>
+<li><h3>Allow Bluetooth</h3><p>Grant <b>Nearby devices</b> (Bluetooth) so the app can find and talk to your bag.</p></li>
+<li><h3>Allow precise location</h3><p>Choose <b>While using the app</b> and keep <b>Precise</b> switched on. Location is how the app recognises the store and notices that you’ve left; approximate location isn’t accurate enough.</p></li>
+<li><h3>Allow notifications</h3><p>SmartBag shows an ongoing “shopping” notification while it works, and a notification with your total after you walk out.</p></li>
+<li><h3>Switch on the bag and keep the app running</h3><p>Keep the bag close until it shows as connected. You can lock the phone and pocket it; the ongoing notification keeps SmartBag active. Don’t force-stop the app mid-shop.</p></li>
+</ol>
+</div>
+</div>
+</section>
+
+<section class="sec" id="shopping" aria-labelledby="shop-h">
+<div class="wrap">
+<div class="sec-head"><div><div class="eyebrow">03 · Shopping &amp; receipts</div><h2 id="shop-h">What happens in the aisle, and at the door.</h2></div><p>Your list updates as the bag reports items. The total is only settled once you leave, using the prices of the store you were in.</p></div>
+<div class="shop">
+<div>
+<div class="facts">
+<div><h3>In a participating store</h3><p>The store’s name appears at the top of the app. Items are priced from that store’s catalog as soon as they go in the bag.</p></div>
+<div><h3>Adding and removing</h3><p>Put an item in to add it; take it out to remove it. Scanning the same tagged item twice doesn’t count it twice.</p></div>
+<div><h3>Items the store doesn’t list</h3><p>Anything without a price here is marked “not sold here” and is not charged. Sort it out with staff before you leave.</p></div>
+<div><h3>Outside a store</h3><p>The bag still reports items, but nothing is priced until your phone is inside a participating store.</p></div>
+</div>
+<div class="timeline">
+<p class="label">Walking out</p>
+<div class="tl">
+<div><b>You leave</b>Carry on out of the door as normal.</div>
+<div><b>Confirmed outside</b>Two accurate location readings beyond the store area.</div>
+<div><b>Bag totalled</b>Items priced at that store; the order is recorded once.</div>
+<div><b>Receipt</b>Opens in the app, plus a notification. The bag blinks.</div>
+</div>
+</div>
+</div>
+<div>
+<div class="receipt" role="img" aria-label="Example receipt with three items, one item not sold here, total 11 dollars 18, paid with demo card">
+<div class="r-h">Bayside Grocer</div>
+<div class="muted">Receipt 7KQ2XD · walked out 6:42 pm</div>
+<hr>
+<div class="r-row"><span>Oat milk 1 L</span><span>4.69</span></div>
+<div class="r-row"><span>Sourdough loaf</span><span>3.50</span></div>
+<div class="r-row"><span>Bananas</span><span>2.99</span></div>
+<div class="r-row strike"><span>Item 9999 · not sold here</span><span>—</span></div>
+<hr>
+<div class="r-row tot"><span>Total</span><span>$11.18</span></div>
+<div class="r-row muted"><span>Demo Visa •••• 4242</span><span>simulated</span></div>
+<div class="paid"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="8" fill="#E8654A"/><path d="m4.8 8.2 2.2 2.2 4.3-4.6" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>Paid · demo</div>
+</div>
+<p class="cap">Example receipt, illustration with demo data. If a payment method is missing, the receipt is marked “payment due” instead of paid.</p>
+</div>
+</div>
+</div>
+</section>
+
+<section class="sec sec-alt" id="stores" aria-labelledby="stores-h">
+<div class="wrap">
+<div class="sec-head"><div><div class="eyebrow">04 · For store operators</div><h2 id="stores-h">Setting up a participating store.</h2></div><p>Bag It only works where a store has been configured. During the prototype, stores are set up together with the project team; there is no self-serve sign-up yet.</p></div>
+<div class="ops">
+<div class="op"><div class="eyebrow">Location</div><h3>Store area</h3><p>A centre point and a detection radius (up to 400 m) that covers the building. Shoppers inside it are placed in your store automatically.</p></div>
+<div class="op"><div class="eyebrow">Catalog</div><h3>Items &amp; prices</h3><p>Every product needs an item code that matches the tag the bag reads, a name and a price. Price edits apply immediately.</p></div>
+<div class="op"><div class="eyebrow">Staff</div><h3>Access by invite</h3><p>Staff join a store with a private invite code from an existing staff member. Codes can be rotated at any time.</p></div>
+<div class="op"><div class="eyebrow">Console</div><h3>Live view</h3><p>See shoppers currently in the store, a live feed of bag activity and orders from the last two days.</p></div>
+</div>
+<div class="ops-foot">
+<div><p class="label">Before shoppers arrive</p><ul><li>Place the centre at the middle of the shop floor and size the radius to cover the building, not the car park.</li><li>Tag each product with the code that’s in your catalog, and spot-check a few in a bag.</li><li>Do one full test trip: fill a bag, walk out, and confirm the order appears.</li></ul></div>
+<div><p class="label">Good to know</p><ul><li>Walk-out is confirmed a little beyond your radius to avoid false exits at the door.</li><li>Items missing from your catalog are never charged; shoppers are asked to see staff.</li><li>Keep invite codes private. They grant access to your store’s console.</li></ul></div>
+</div>
+</div>
+</section>
+
+<section class="sec" id="faq" aria-labelledby="faq-h">
+<div class="wrap faq-grid">
+<div><div class="eyebrow">05 · Help</div><h2 id="faq-h" style="font-size:clamp(32px,4.2vw,50px);line-height:1.06;margin-top:14px">Questions &amp; troubleshooting</h2><p style="color:var(--muted);margin-top:18px">Most problems come down to Bluetooth, precise location, or the phone being offline.</p></div>
+<div class="faq"><details><summary>Do I ever press Pay?<span class="pm" aria-hidden="true"></span></summary><div class="a"><p>No. There is no checkout screen and no Pay button. When your phone leaves a participating store, the bag is totalled and a receipt appears in the app automatically.</p></div></details><details><summary>Am I actually being charged?<span class="pm" aria-hidden="true"></span></summary><div class="a"><p>No. Bag It is a hackathon prototype and payments are simulated. The app uses a demo payment label (“Demo Visa •••• 4242”); no card is stored and no money moves. Please don’t enter real card details anywhere.</p></div></details><details><summary>Which stores work?<span class="pm" aria-hidden="true"></span></summary><div class="a"><p>Only stores that have been set up for Bag It: a location, a detection area and a catalog of item codes. When the app recognises the store you’re in, its name appears at the top of the screen. Anywhere else, items stay in your bag list but nothing is priced or charged.</p></div></details><details><summary>The app can’t find my bag.<span class="pm" aria-hidden="true"></span></summary><div class="a"><ul><li>Make sure the bag is switched on and powered (charged battery or USB power).</li><li>Turn on Bluetooth, and allow <em>Nearby devices</em> (or Bluetooth) for SmartBag in Android settings.</li><li>Keep the phone within a couple of metres of the bag.</li><li>A bag connects to one phone at a time. Close SmartBag on any other phone that used this bag.</li><li>Still nothing: power the bag off and on, then reopen the app.</li></ul></div></details><details><summary>The app says I’m not in a store.<span class="pm" aria-hidden="true"></span></summary><div class="a"><ul><li>Check that Location is on and that SmartBag has <em>Precise</em> location (not Approximate).</li><li>GPS indoors can drift by tens of metres. Standing near the entrance or a window usually helps.</li><li>The store itself must be participating; see “Which stores work?”.</li><li>The app needs a mobile data or Wi‑Fi connection to look the store up.</li></ul></div></details><details><summary>An item says “not sold here”.<span class="pm" aria-hidden="true"></span></summary><div class="a"><p>That item’s code isn’t in this store’s catalog, so it is not charged. It stays visible on your list and receipt. Show it to a member of staff so they can add it to the catalog or settle it with you directly.</p></div></details><details><summary>I walked out, but no receipt appeared.<span class="pm" aria-hidden="true"></span></summary><div class="a"><ul><li>Leaving is confirmed after two accurate location readings outside the store area, so it can take a short while and some distance past the door.</li><li>The phone needs a network connection. If it was offline, the app catches up once it reconnects; receipts are not guaranteed to be instant, and nothing is charged while the phone is offline.</li><li>Keep SmartBag running: don’t swipe away its ongoing notification or force-stop it. Open the app to refresh.</li><li>If location reporting stops with the screen off, set SmartBag’s battery usage to <em>Unrestricted</em>.</li></ul></div></details><details><summary>How do I remove an item?<span class="pm" aria-hidden="true"></span></summary><div class="a"><p>Take it out of the bag. The bag reports the removal and the item leaves your list. You can also remove a line in the app.</p></div></details><details><summary>Android won’t install the APK.<span class="pm" aria-hidden="true"></span></summary><div class="a"><ul><li>Allow your browser or file manager to install apps: <span class="path">Settings › Apps › Special app access › Install unknown apps</span> (wording varies by phone).</li><li>Play Protect may warn about an unrecognised developer. That’s expected for a prototype that isn’t on Google Play; only continue if you downloaded the file from this site.</li><li>If an older SmartBag build is installed and the update fails, uninstall it first.</li></ul></div></details><details><summary>Is there an iPhone app?<span class="pm" aria-hidden="true"></span></summary><div class="a"><p>Not in the App Store or TestFlight. The iPhone app currently exists as source code you can build yourself on a Mac with Xcode 15 or newer and an iPhone on iOS 16+. It has not yet been tested on a physical iPhone with the bag.</p></div></details></div>
+</div>
+</section>
+
+<section class="sec sec-alt" id="privacy" aria-labelledby="priv-h">
+<div class="wrap">
+<div class="sec-head"><div><div class="eyebrow">06 · Privacy &amp; limitations</div><h2 id="priv-h">An honest prototype.</h2></div><p>Bag It was built at Cal Hacks 13.0 in October 2026. It shows how walk-out shopping could work; it is not a commercial payment service.</p></div>
+<div class="warn" role="note"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5 18 17H2z" fill="none" stroke="#B4452D" stroke-width="1.6" stroke-linejoin="round"/><path d="M10 8v4.2" stroke="#B4452D" stroke-width="1.6" stroke-linecap="round"/><circle cx="10" cy="14.6" r=".95" fill="#B4452D"/></svg><p><b>Demo data only.</b> The prototype’s database tables are currently publicly readable. Don’t enter your real name, card numbers or any other personal or payment information.</p></div>
+<div class="cols">
+<div><p class="label">What the app sends</p><ul><li>An anonymous app identity. No account, name or email.</li><li>Your phone’s location while a shopping session is active, to recognise the store and detect walking out.</li><li>The item codes your bag reports.</li><li>A demo payment label. No card number is ever collected.</li></ul></div>
+<div><p class="label">How long it’s kept</p><ul><li>The live bag activity log is cleared after about an hour.</li><li>Idle, empty shopping sessions are removed after about 12 hours.</li><li>Receipts are kept as demo orders.</li><li>This website sets no cookies and loads no analytics or third-party scripts.</li></ul></div>
+<div><p class="label">Known limitations</p><ul><li>Payments are simulated. Nothing is charged.</li><li>GPS, Bluetooth and mobile data can be unreliable indoors; detection and receipts are not guaranteed to be instant or to work offline.</li><li>The Android app hasn’t yet been verified end to end on a physical phone with the bag; the iPhone app is source-only.</li><li>Works only in configured stores.</li></ul></div>
+</div>
+<details class="tech">
+<summary>Technical notes</summary>
+<div class="body">
+<ul>
+<li>Backend: a SpacetimeDB module that places a phone in a store from its location, prices the bag and records the order in a single transaction when the phone leaves.</li>
+<li>The phone app makes request/response calls over one WebSocket; it does not subscribe to database updates.</li>
+<li>The bag uses the Bluetooth LE Nordic UART service; prototype firmware runs on an ESP32.</li>
+</ul>
+<div class="dl"><a class="btn btn-ghost btn-sm" href="./downloads/SmartBag-source-3.0.zip" download>Android source · ZIP</a><a class="btn btn-ghost btn-sm" href="./downloads/SmartBag-iOS-source-1.0.zip" download>iPhone source · ZIP</a></div>
+</div>
+</details>
+</div>
+</section>
+</main>
+
+<footer>
+<div class="wrap">
+<div><b style="color:var(--ink)">Bag It</b> · SmartBag device + app<br>Prototype built at Cal Hacks 13.0, October 2026.</div>
+<nav aria-label="Footer"><a href="#how">How it works</a><a href="#start">Get started</a><a href="#stores">For stores</a><a href="#faq">Help</a><a href="#privacy">Privacy</a><a href="#top">Back to top</a></nav>
+</div>
+</footer>
+<script>
+(function(){var b=document.querySelector('.menu-btn'),n=document.getElementById('mnav');if(!b||!n)return;
+function set(o){n.setAttribute('data-open',o?'true':'false');b.setAttribute('aria-expanded',o?'true':'false');b.textContent=o?'Close':'Menu';}
+b.addEventListener('click',function(){set(n.getAttribute('data-open')!=='true');});
+n.addEventListener('click',function(e){if(e.target.closest('a'))set(false);});
+document.addEventListener('keydown',function(e){if(e.key==='Escape'&&n.getAttribute('data-open')==='true'){set(false);b.focus();}});})();
+</script>
+</body>
+</html>
