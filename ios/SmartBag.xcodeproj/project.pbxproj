@@ -1,0 +1,393 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 54;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1D0822D1FAD098BCF981AE08 /* ShopModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEFD0F30B73FE6897D353DCC /* ShopModel.swift */; };
+		23108993E459AF9A44243C49 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 694829EBE3229927DA63D4B2 /* Theme.swift */; };
+		37D48483036C3B7FB8269B6F /* BagLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B63F0E7F5E7C4171C46A09F /* BagLink.swift */; };
+		4F852B0345417B2FF0E93903 /* ReceiptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E74C48226ABE9C3D0C80E4 /* ReceiptView.swift */; };
+		512146FD7A181927FCAA2E29 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A6DCA749FE21ABC0D76903B /* WelcomeView.swift */; };
+		541139E82154F3B3C76A8A32 /* SmartBagApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4200B773920A6FCCA11C4F26 /* SmartBagApp.swift */; };
+		67DE1E89613532E87FA4E398 /* ShopView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC584B4600E1B9AEA720665D /* ShopView.swift */; };
+		6B3B4969E7A09125BE7E5D9A /* BagProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0B06ADB32F6D43DA346E8A4 /* BagProtocol.swift */; };
+		957E2BAE13A0D9F7CFB4F4E9 /* SpacetimeClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F71BD07149EC0BF66C6072EB /* SpacetimeClient.swift */; };
+		A43A550F62733F8D2D644E92 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F722CBB13356EBF84DBF9667 /* Assets.xcassets */; };
+		BDF34DCB00040955FAD2D814 /* KeychainTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DD57D8A70A93547AA1097B6 /* KeychainTokenStore.swift */; };
+		D0EE2DC969365CABBC0E8F17 /* Notify.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23C0C411234969543ABE7AFC /* Notify.swift */; };
+		DE5A6BF05D514F3B166080C2 /* PhoneLocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2B8CC85EC0904BBB83E7822 /* PhoneLocation.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0649D93B765DBC53AE8BCF76 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		23C0C411234969543ABE7AFC /* Notify.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Notify.swift; sourceTree = "<group>"; };
+		2C781F74BEF3C52E3C97E069 /* SmartBag.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = SmartBag.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		4200B773920A6FCCA11C4F26 /* SmartBagApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmartBagApp.swift; sourceTree = "<group>"; };
+		694829EBE3229927DA63D4B2 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		8B63F0E7F5E7C4171C46A09F /* BagLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BagLink.swift; sourceTree = "<group>"; };
+		9A6DCA749FE21ABC0D76903B /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
+		9DD57D8A70A93547AA1097B6 /* KeychainTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainTokenStore.swift; sourceTree = "<group>"; };
+		A2B8CC85EC0904BBB83E7822 /* PhoneLocation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneLocation.swift; sourceTree = "<group>"; };
+		D4E74C48226ABE9C3D0C80E4 /* ReceiptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptView.swift; sourceTree = "<group>"; };
+		E0B06ADB32F6D43DA346E8A4 /* BagProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BagProtocol.swift; sourceTree = "<group>"; };
+		EC584B4600E1B9AEA720665D /* ShopView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShopView.swift; sourceTree = "<group>"; };
+		F71BD07149EC0BF66C6072EB /* SpacetimeClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpacetimeClient.swift; sourceTree = "<group>"; };
+		F722CBB13356EBF84DBF9667 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		FEFD0F30B73FE6897D353DCC /* ShopModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShopModel.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		2C86A7C93DE972102FBF3D5F /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				D4E74C48226ABE9C3D0C80E4 /* ReceiptView.swift */,
+				EC584B4600E1B9AEA720665D /* ShopView.swift */,
+				694829EBE3229927DA63D4B2 /* Theme.swift */,
+				9A6DCA749FE21ABC0D76903B /* WelcomeView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		3FFEE7D1E7A36405EE352E6F /* SmartBag */ = {
+			isa = PBXGroup;
+			children = (
+				F722CBB13356EBF84DBF9667 /* Assets.xcassets */,
+				0649D93B765DBC53AE8BCF76 /* Info.plist */,
+				F5781A6815F304054762A60C /* App */,
+				CE30219F6D80CED8E7BEC8E0 /* Core */,
+				8B8028B241C45CF5ABF4E1DA /* Model */,
+				2C86A7C93DE972102FBF3D5F /* Views */,
+			);
+			path = SmartBag;
+			sourceTree = "<group>";
+		};
+		8B8028B241C45CF5ABF4E1DA /* Model */ = {
+			isa = PBXGroup;
+			children = (
+				8B63F0E7F5E7C4171C46A09F /* BagLink.swift */,
+				9DD57D8A70A93547AA1097B6 /* KeychainTokenStore.swift */,
+				23C0C411234969543ABE7AFC /* Notify.swift */,
+				A2B8CC85EC0904BBB83E7822 /* PhoneLocation.swift */,
+				FEFD0F30B73FE6897D353DCC /* ShopModel.swift */,
+			);
+			path = Model;
+			sourceTree = "<group>";
+		};
+		A23C5948AB96CD182EA7D825 = {
+			isa = PBXGroup;
+			children = (
+				3FFEE7D1E7A36405EE352E6F /* SmartBag */,
+				B653E3800369292A90FCB315 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		B653E3800369292A90FCB315 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				2C781F74BEF3C52E3C97E069 /* SmartBag.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		CE30219F6D80CED8E7BEC8E0 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				E0B06ADB32F6D43DA346E8A4 /* BagProtocol.swift */,
+				F71BD07149EC0BF66C6072EB /* SpacetimeClient.swift */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		F5781A6815F304054762A60C /* App */ = {
+			isa = PBXGroup;
+			children = (
+				4200B773920A6FCCA11C4F26 /* SmartBagApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		674541826E3025DB26781A27 /* SmartBag */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B3715351ADEAFF67048C2835 /* Build configuration list for PBXNativeTarget "SmartBag" */;
+			buildPhases = (
+				8E363D41DC9ED6A50A3272F1 /* Sources */,
+				C71AC5615A5BF113B917C92A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SmartBag;
+			productName = SmartBag;
+			productReference = 2C781F74BEF3C52E3C97E069 /* SmartBag.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		146D4A626AE3E229DE7B0B3E /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					674541826E3025DB26781A27 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 1ECA00C98B87661EE9936BEB /* Build configuration list for PBXProject "SmartBag" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = A23C5948AB96CD182EA7D825;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				674541826E3025DB26781A27 /* SmartBag */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		C71AC5615A5BF113B917C92A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A43A550F62733F8D2D644E92 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		8E363D41DC9ED6A50A3272F1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				37D48483036C3B7FB8269B6F /* BagLink.swift in Sources */,
+				6B3B4969E7A09125BE7E5D9A /* BagProtocol.swift in Sources */,
+				BDF34DCB00040955FAD2D814 /* KeychainTokenStore.swift in Sources */,
+				D0EE2DC969365CABBC0E8F17 /* Notify.swift in Sources */,
+				DE5A6BF05D514F3B166080C2 /* PhoneLocation.swift in Sources */,
+				4F852B0345417B2FF0E93903 /* ReceiptView.swift in Sources */,
+				1D0822D1FAD098BCF981AE08 /* ShopModel.swift in Sources */,
+				67DE1E89613532E87FA4E398 /* ShopView.swift in Sources */,
+				541139E82154F3B3C76A8A32 /* SmartBagApp.swift in Sources */,
+				957E2BAE13A0D9F7CFB4F4E9 /* SpacetimeClient.swift in Sources */,
+				23108993E459AF9A44243C49 /* Theme.swift in Sources */,
+				512146FD7A181927FCAA2E29 /* WelcomeView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		CB15A30D096238E4B6A4464C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		D81DFDF42DEE2597EFA62A32 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SmartBag/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = space.mana.smartbag;
+				PRODUCT_NAME = SmartBag;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		DC653773370CCFD9660236CE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		DCC87EABDAFBA90A0CDA8787 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SmartBag/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = space.mana.smartbag;
+				PRODUCT_NAME = SmartBag;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1ECA00C98B87661EE9936BEB /* Build configuration list for PBXProject "SmartBag" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DC653773370CCFD9660236CE /* Debug */,
+				CB15A30D096238E4B6A4464C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		B3715351ADEAFF67048C2835 /* Build configuration list for PBXNativeTarget "SmartBag" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DCC87EABDAFBA90A0CDA8787 /* Debug */,
+				D81DFDF42DEE2597EFA62A32 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 146D4A626AE3E229DE7B0B3E /* Project object */;
+}
