@@ -1,0 +1,17 @@
+{
+  "coordinate_system": "normalized_0_to_1",
+  "outside_zone": {"x1": 0.0, "y1": 0.0, "x2": 1.0, "y2": 0.5},
+  "inside_zone": {"x1": 0.0, "y1": 0.5, "x2": 1.0, "y2": 1.0},
+  "boundary": {"x1": 0.0, "y1": 0.5, "x2": 1.0, "y2": 0.5},
+  "add_direction": "outside_to_inside",
+  "confidence_threshold": 0.5,
+  "zone_margin": 0.02,
+  "centroid_smoothing": 0.5,
+  "zone_observations": 3,
+  "minimum_crossing_distance": 0.12,
+  "minimum_class_observations": 3,
+  "class_stability_ratio": 0.67,
+  "max_missed_seconds": 0.75,
+  "minimum_iou": 0.05,
+  "maximum_centroid_distance": 0.14
+}
