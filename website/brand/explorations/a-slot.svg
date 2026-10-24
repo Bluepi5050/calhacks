@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 172 48" role="img" aria-label="Bag It, direction a-slot"><defs><mask id="a-slotk" maskUnits="userSpaceOnUse" x="0" y="0" width="48" height="48"><rect width="48" height="48" fill="#fff"/><rect x="16.5" y="19" width="15" height="4.8" rx="2.4" fill="#000"/></mask></defs>
+<path mask="url(#a-slotk)" d="M10.5 13h27a2.5 2.5 0 0 1 2.5 2.7l-1.9 24.5a3 3 0 0 1-3 2.8H12.4a3 3 0 0 1-3-2.8L8 15.7A2.5 2.5 0 0 1 10.5 13z" fill="#18181B"/>
+<rect x="16.5" y="19" width="15" height="4.8" rx="2.4" fill="#E8654A"/><g transform="translate(58 0) scale(1.0)" color="#18181B"><g fill="none" stroke="#18181B" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+<path d="M2 12V40"/><circle cx="10" cy="32" r="8"/>
+<circle cx="33.5" cy="32" r="8"/><path d="M41.5 24V40"/>
+<circle cx="57.5" cy="32" r="8"/><path d="M65.5 24V43a8 8 0 0 1-8 8h-4"/>
+<path d="M83 24V40"/>
+<path d="M95 14V35a5 5 0 0 0 5 5h1.5M92 24H102"/></g>
+<circle cx="83" cy="15.2" r="3.1" fill="#E8654A"/></g></svg>

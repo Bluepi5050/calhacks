@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 172 48" role="img" aria-label="Bag It, direction b-rim"><g fill="none" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round">
+<path d="M10 17l1.9 23a3 3 0 0 0 3 2.8h18.2a3 3 0 0 0 3-2.8L38 17M16.5 17v-3a7.5 7.5 0 0 1 15 0v3" stroke="#18181B"/>
+<path d="M10 17h28" stroke="#E8654A"/></g><g transform="translate(58 0) scale(1.0)" color="#18181B"><g fill="none" stroke="#18181B" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+<path d="M2 12V40"/><circle cx="10" cy="32" r="8"/>
+<circle cx="33.5" cy="32" r="8"/><path d="M41.5 24V40"/>
+<circle cx="57.5" cy="32" r="8"/><path d="M65.5 24V43a8 8 0 0 1-8 8h-4"/>
+<path d="M83 24V40"/>
+<path d="M95 14V35a5 5 0 0 0 5 5h1.5M92 24H102"/></g>
+<circle cx="83" cy="15.2" r="3.1" fill="#E8654A"/></g></svg>
