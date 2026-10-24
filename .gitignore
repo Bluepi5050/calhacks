@@ -218,3 +218,25 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Node.js / Next.js
+node_modules/
+.next/
+
+# API credentials
+.env
+.env.*
+!.env.example
+
+# YOLO training outputs
+runs/
+datasets/
+*.pt
+
+# Operating system
+.DS_Store
