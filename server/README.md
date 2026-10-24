@@ -22,3 +22,12 @@ cd server/spacetimedb && npm install && cd ..
 spacetime publish <database-name> --server maincloud --yes
 # schema changes: add --delete-data=always (init re-seeds two demo stores and a new admin code)
 ```
+
+## Accounts (v4, additive)
+
+- Private tables: `account`, `member_name`, `staff_email_invite`, `activity`, `store_owner`. The public `profile` table is intentionally unused.
+- `clientConnected` rejects SpacetimeAuth tokens issued for another client (the audience must be in config `auth_client_ids`, set with `set_auth_clients`).
+- Reducers: `sign_in`, `set_display_name`, `invite_staff`/`revoke_staff_invite`/`accept_invite`/`decline_invite`, `remove_staff`. `delete_store`, `rotate_invite` and `reset_demo(storeId)` are owner-only.
+- Procedure: `server_time`. Views (each scoped to the caller): `my_account`, `my_team`, `my_store_activity`, `my_store_people`, `my_invites`.
+- Published with `--delete-data=never`. The shop_* phone API is unchanged.
+- `tools/setup_auth.py` finishes the SpacetimeAuth setup once it has been enabled on the dashboard.

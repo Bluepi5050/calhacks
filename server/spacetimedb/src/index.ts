@@ -123,8 +123,50 @@ const cleanupTimer = table({ name: 'cleanup_timer' }, {
   scheduledAt: t.scheduleAt(),
 });
 
+
+// ── Accounts (v4, additive): people sign in with SpacetimeAuth (OIDC); their SpacetimeDB identity is
+// derived from the token's issuer + subject, so the same person has the same identity on every device.
+const account = table({ name: 'account' }, {          // private: holds emails
+  identity: t.identity().primaryKey(),
+  name: t.string(),
+  email: t.string().index('btree'),
+  emailVerified: t.bool(),
+  picture: t.string(),
+  subject: t.string(),
+  signedInAt: t.timestamp(),
+});
+const profile = table({ name: 'profile', public: true }, {   // public: display name only, never email
+  identity: t.identity().primaryKey(),
+  name: t.string(),
+});
+const staffEmailInvite = table({ name: 'staff_email_invite' }, {   // private
+  id: t.u64().primaryKey().autoInc(),
+  storeId: t.string().index('btree'),
+  email: t.string().index('btree'),
+  invitedBy: t.string(),
+  at: t.timestamp(),
+});
+const storeOwner = table({ name: 'store_owner' }, {    // private: who opened a store (owners can delete it and manage the team)
+  id: t.u64().primaryKey().autoInc(),
+  storeId: t.string().index('btree'),
+  identity: t.identity().index('btree'),
+});
+const memberName = table({ name: 'member_name' }, {    // private: display names of signed-in people (read via caller-scoped views)
+  identity: t.identity().primaryKey(),
+  name: t.string(),
+});
+const activity = table({ name: 'activity' }, {        // private: who changed what, read through my_store_activity
+  id: t.u64().primaryKey().autoInc(),
+  storeId: t.string().index('btree'),
+  actor: t.identity(),
+  actorName: t.string(),
+  action: t.string(),
+  at: t.timestamp(),
+});
+
 const spacetimedb = schema({
   store, product, shopper, cartItem, shopOrder, orderLine, bagEvent, operator, config, storeStaff, storeInvite, cleanupTimer,
+  account, profile, staffEmailInvite, activity, storeOwner, memberName,
 });
 export default spacetimedb;
 
@@ -158,14 +200,67 @@ function randomCode(ctx: Ctx, n: number): string {
 }
 function dayOf(ctx: Ctx): string { return new Date(Number(ctx.timestamp.microsSinceUnixEpoch / 1000n)).toISOString().slice(0, 10); }
 
-function isAdmin(ctx: Ctx) { return !!ctx.db.operator.identity.find(ctx.sender); }
+// A SpacetimeAuth token minted for some other app (wrong audience) never carries privileges here.
+function authOk(ctx: Ctx) {
+  const jwt = (ctx.senderAuth as any)?.jwt;
+  return !(jwt && jwt.issuer === AUTH_ISSUER && !verifiedClaims(ctx));
+}
+function isAdmin(ctx: Ctx) { return !!ctx.db.operator.identity.find(ctx.sender) && authOk(ctx); }
+function isOwnerOf(ctx: Ctx, storeId: string) {
+  if (isAdmin(ctx)) return true;
+  if (!authOk(ctx)) return false;
+  for (const o of ctx.db.storeOwner.identity.filter(ctx.sender)) if (o.storeId === storeId) return true;
+  return false;
+}
+function requireOwner(ctx: Ctx, storeId: string) { if (!isOwnerOf(ctx, storeId)) throw new SenderError('Only the store’s owner can do that.'); }
 function isStaff(ctx: Ctx, storeId: string) {
   if (isAdmin(ctx)) return true;
+  if (!authOk(ctx)) return false;
   for (const s of ctx.db.storeStaff.identity.filter(ctx.sender)) if (s.storeId === storeId) return true;
   return false;
 }
 function requireStaff(ctx: Ctx, storeId: string) { if (!isStaff(ctx, storeId)) throw new SenderError('Only staff of this store can do that.'); }
 function requireAdmin(ctx: Ctx) { if (!isAdmin(ctx)) throw new SenderError('Admins only.'); }
+
+const AUTH_ISSUER = 'https://auth.spacetimedb.com/oidc';
+function shortHex(id: { toHexString(): string }) { return id.toHexString().slice(-6); }
+function actorName(ctx: Ctx) {
+  const p = ctx.db.memberName.identity.find(ctx.sender);
+  if (p && p.name) return p.name;
+  return ctx.db.operator.identity.find(ctx.sender) ? 'Admin console' : 'Staff ·' + shortHex(ctx.sender);
+}
+function logActivity(ctx: Ctx, storeId: string, action: string) {
+  ctx.db.activity.insert({ id: 0n, storeId, actor: ctx.sender, actorName: actorName(ctx).slice(0, 60), action: action.slice(0, 160), at: ctx.timestamp });
+}
+function addStaff(ctx: Ctx, who: any, storeId: string) {
+  for (const s of ctx.db.storeStaff.identity.filter(who)) if (s.storeId === storeId) return false;
+  ctx.db.storeStaff.insert({ id: 0n, identity: who, storeId });
+  return true;
+}
+// Accept only SpacetimeAuth tokens issued for this app's own client(s) (config 'auth_client_ids').
+function verifiedClaims(ctx: Ctx): any {
+  const jwt = (ctx.senderAuth as any)?.jwt;
+  if (!jwt || jwt.issuer !== AUTH_ISSUER) return null;
+  const c = ctx.db.config.key.find('auth_client_ids');
+  const allowed = c ? c.value.split(',').map((x: string) => x.trim()).filter(Boolean) : [];
+  if (!allowed.length || !jwt.audience.some((a: string) => allowed.includes(a))) return null;
+  return jwt;
+}
+function doSignIn(ctx: Ctx): boolean {
+  const jwt = verifiedClaims(ctx);
+  if (!jwt) return false;
+  const p: any = jwt.fullPayload || {};
+  const email = String(p.email || '').trim().toLowerCase().slice(0, 120);
+  const verified = p.email_verified === true || p.email_verified === 'true' || p.login_method === 'magic_link';
+  const name = String(p.name || p.preferred_username || p.nickname || p.given_name || (email ? email.split('@')[0] : '') || 'Member').slice(0, 60);
+  const row = { identity: ctx.sender, name, email, emailVerified: verified, picture: String(p.picture || '').slice(0, 300), subject: String(jwt.subject).slice(0, 120), signedInAt: ctx.timestamp };
+  const cur = ctx.db.account.identity.find(ctx.sender);
+  if (cur) ctx.db.account.identity.update({ ...row, name: cur.name || name }); else ctx.db.account.insert(row);
+  if (!ctx.db.memberName.identity.find(ctx.sender)) ctx.db.memberName.insert({ identity: ctx.sender, name });
+  // Pending email invites are shown to the invitee (my_invites) and only take effect when they accept.
+  return true;
+}
+
 
 function findProduct(ctx: Ctx, storeId: string, sku: string) {
   for (const p of ctx.db.product.by_store_sku.filter([storeId, sku])) return p;
@@ -203,6 +298,10 @@ function removeStore(ctx: Ctx, id: string) {
   for (const p of [...ctx.db.product.by_store_sku.filter(id)]) ctx.db.product.id.delete(p.id);
   for (const s of [...ctx.db.storeStaff.storeId.filter(id)]) ctx.db.storeStaff.id.delete(s.id);
   ctx.db.storeInvite.storeId.delete(id);
+  for (const o of [...ctx.db.storeOwner.storeId.filter(id)]) ctx.db.storeOwner.id.delete(o.id);
+  for (const c of [...ctx.db.cartItem.storeId.filter(id)]) ctx.db.cartItem.id.delete(c.id);
+  for (const sh of [...ctx.db.shopper.storeId.filter(id)]) ctx.db.shopper.identity.update({ ...sh, storeId: '', storeName: '', storeAddress: '', outsideFixes: 0 });
+  for (const i of [...ctx.db.staffEmailInvite.storeId.filter(id)]) ctx.db.staffEmailInvite.id.delete(i.id);
   ctx.db.store.id.delete(id);
 }
 
@@ -457,8 +556,13 @@ export const myOrders = spacetimedb.view({ name: 'my_orders', public: true }, t.
 const StaffStore = t.row('StaffStore', { storeId: t.string().primaryKey(), role: t.string(), inviteCode: t.string() });
 export const myStores = spacetimedb.view({ name: 'my_stores', public: true }, t.array(StaffStore), ctx => {
   const invite = (id: string) => { const i = ctx.db.storeInvite.storeId.find(id); return i ? i.code : ''; };
-  if (ctx.db.operator.identity.find(ctx.sender)) return [...ctx.db.store.iter()].map(s => ({ storeId: s.id, role: 'admin', inviteCode: invite(s.id) }));
-  return [...ctx.db.storeStaff.identity.filter(ctx.sender)].map(s => ({ storeId: s.storeId, role: 'staff', inviteCode: invite(s.storeId) }));
+  if (ctx.db.operator.identity.find(ctx.sender)) {
+    const owned = new Set([...ctx.db.storeOwner.identity.filter(ctx.sender)].map(o => o.storeId));
+    const staffed = new Set([...ctx.db.storeStaff.identity.filter(ctx.sender)].map(o => o.storeId));
+    return [...ctx.db.store.iter()].map(s => ({ storeId: s.id, role: owned.has(s.id) ? 'owner' : staffed.has(s.id) ? 'staff' : 'admin', inviteCode: invite(s.id) }));
+  }
+  const owned = new Set([...ctx.db.storeOwner.identity.filter(ctx.sender)].map(o => o.storeId));
+  return [...ctx.db.storeStaff.identity.filter(ctx.sender)].map(s => ({ storeId: s.storeId, role: owned.has(s.storeId) ? 'owner' : 'staff', inviteCode: invite(s.storeId) }));
 });
 
 // ───────────────────────── Lifecycle, setup, maintenance ─────────────────────────
@@ -490,6 +594,8 @@ export const bootstrap = spacetimedb.reducer(ctx => {
 export const cleanup = spacetimedb.reducer({ onSchedule: cleanupTimer }, { timer: cleanupTimer.rowType }, (ctx, { timer: _timer }) => {
   const now = ctx.timestamp.microsSinceUnixEpoch;
   for (const e of [...ctx.db.bagEvent.iter()]) if (now - e.at.microsSinceUnixEpoch > FEED_TTL_MICROS) ctx.db.bagEvent.id.delete(e.id);
+  for (const a of [...ctx.db.activity.iter()]) if (now - a.at.microsSinceUnixEpoch > 7n * 86_400_000_000n) ctx.db.activity.id.delete(a.id);
+  setRecentDays(ctx);
   for (const s of [...ctx.db.shopper.iter()]) {
     if (now - s.updatedAt.microsSinceUnixEpoch < IDLE_SHOPPER_MICROS) continue;
     let hasCart = false;
@@ -510,27 +616,29 @@ export const claimOperator = spacetimedb.reducer({ code: t.string() }, (ctx, { c
 export const joinStore = spacetimedb.reducer({ code: t.string() }, (ctx, { code }) => {
   const inv = ctx.db.storeInvite.code.find(code.trim().toUpperCase());
   if (!inv) throw new SenderError('Invalid store invite code.');
-  for (const s of ctx.db.storeStaff.identity.filter(ctx.sender)) if (s.storeId === inv.storeId) return;
-  ctx.db.storeStaff.insert({ id: 0n, identity: ctx.sender, storeId: inv.storeId });
+  if (addStaff(ctx, ctx.sender, inv.storeId)) logActivity(ctx, inv.storeId, 'joined with an invite code');
 });
 
 export const rotateInvite = spacetimedb.reducer({ storeId: t.string() }, (ctx, { storeId }) => {
-  requireStaff(ctx, storeId);
+  requireOwner(ctx, storeId);
   let code = randomCode(ctx, 8);
   while (ctx.db.storeInvite.code.find(code)) code = randomCode(ctx, 8);
   const cur = ctx.db.storeInvite.storeId.find(storeId);
   if (cur) ctx.db.storeInvite.storeId.update({ storeId, code }); else ctx.db.storeInvite.insert({ storeId, code });
+  logActivity(ctx, storeId, 'made a new invite code');
 });
 
 // Any identity can open a store (up to 5; admins unlimited) and becomes its first staff member.
 export const pinStore = spacetimedb.reducer({ name: t.string(), lat: t.f64(), lng: t.f64() }, (ctx, { name, lat, lng }) => {
-  if (!isAdmin(ctx) && [...ctx.db.storeStaff.identity.filter(ctx.sender)].length >= MAX_STORES_PER_OWNER)
+  if (!isAdmin(ctx) && [...ctx.db.storeOwner.identity.filter(ctx.sender)].length >= MAX_STORES_PER_OWNER)
     throw new SenderError('Store limit reached for this account.');
   let id = 'store-' + randomCode(ctx, 6).toLowerCase();
   while (ctx.db.store.id.find(id)) id = 'store-' + randomCode(ctx, 6).toLowerCase();
   createStore(ctx, id, name || 'Demo Market', 'Pinned from the console', lat, lng, 150);
   addCatalog(ctx, id, {}, []);
   if (!isAdmin(ctx)) ctx.db.storeStaff.insert({ id: 0n, identity: ctx.sender, storeId: id });
+  ctx.db.storeOwner.insert({ id: 0n, storeId: id, identity: ctx.sender });
+  logActivity(ctx, id, 'opened the store');
 });
 
 export const upsertStore = spacetimedb.reducer(
@@ -541,12 +649,19 @@ export const upsertStore = spacetimedb.reducer(
     if (!cur) { requireAdmin(ctx); createStore(ctx, a.id, a.name, a.address, a.lat, a.lng, a.radiusM); return; }
     requireStaff(ctx, a.id);
     if (!(a.lat >= -85 && a.lat <= 85 && a.lng >= -180 && a.lng <= 180)) throw new SenderError('Invalid location.');
-    ctx.db.store.id.update({ ...cur, name: a.name.slice(0, 80), address: a.address.slice(0, 120), lat: a.lat, lng: a.lng,
-      radiusM: Math.min(MAX_RADIUS_M, Math.max(10, a.radiusM)), cell: cellOf(a.lat, a.lng) });
+    const next = { ...cur, name: a.name.slice(0, 80), address: a.address.slice(0, 120), lat: a.lat, lng: a.lng,
+      radiusM: Math.min(MAX_RADIUS_M, Math.max(10, a.radiusM)), cell: cellOf(a.lat, a.lng) };
+    ctx.db.store.id.update(next);
+    const changes: string[] = [];
+    if (next.name !== cur.name) changes.push('renamed the store to ' + next.name);
+    if (next.address !== cur.address) changes.push('changed the address');
+    if (next.radiusM !== cur.radiusM) changes.push('set the radius to ' + next.radiusM + ' m');
+    if (next.lat !== cur.lat || next.lng !== cur.lng) changes.push('moved the store pin');
+    if (changes.length) logActivity(ctx, a.id, changes.join(', '));
   }
 );
 
-export const deleteStore = spacetimedb.reducer({ id: t.string() }, (ctx, { id }) => { requireStaff(ctx, id); removeStore(ctx, id); });
+export const deleteStore = spacetimedb.reducer({ id: t.string() }, (ctx, { id }) => { requireOwner(ctx, id); removeStore(ctx, id); });
 
 export const upsertProduct = spacetimedb.reducer(
   { storeId: t.string(), sku: t.string(), name: t.string(), priceCents: t.u32(), unit: t.string() },
@@ -556,26 +671,34 @@ export const upsertProduct = spacetimedb.reducer(
     const sku = a.sku.trim().replace(/[^A-Za-z0-9_\-]/g, '').slice(0, 40);
     if (!sku || !a.name.trim()) throw new SenderError('Product needs a SKU and a name.');
     const existing = findProduct(ctx, a.storeId, sku);
-    if (existing) ctx.db.product.id.update({ ...existing, name: a.name.slice(0, 80), priceCents: a.priceCents, unit: a.unit.slice(0, 30) });
-    else ctx.db.product.insert({ id: 0n, storeId: a.storeId, sku, name: a.name.slice(0, 80), priceCents: a.priceCents, unit: a.unit.slice(0, 30) });
+    const money = (c: number) => '$' + (c / 100).toFixed(2);
+    if (existing) {
+      ctx.db.product.id.update({ ...existing, name: a.name.slice(0, 80), priceCents: a.priceCents, unit: a.unit.slice(0, 30) });
+      if (existing.priceCents !== a.priceCents) logActivity(ctx, a.storeId, 'changed ' + a.name.slice(0, 80) + ' from ' + money(existing.priceCents) + ' to ' + money(a.priceCents));
+      if (existing.name !== a.name.slice(0, 80)) logActivity(ctx, a.storeId, 'renamed ' + existing.name + ' to ' + a.name.slice(0, 80));
+    } else {
+      ctx.db.product.insert({ id: 0n, storeId: a.storeId, sku, name: a.name.slice(0, 80), priceCents: a.priceCents, unit: a.unit.slice(0, 30) });
+      logActivity(ctx, a.storeId, 'added ' + a.name.slice(0, 80) + ' at ' + money(a.priceCents));
+    }
   }
 );
 
 export const deleteProduct = spacetimedb.reducer({ storeId: t.string(), sku: t.string() }, (ctx, { storeId, sku }) => {
   requireStaff(ctx, storeId);
   const p = findProduct(ctx, storeId, sku);
-  if (p) ctx.db.product.id.delete(p.id);
+  if (p) { ctx.db.product.id.delete(p.id); logActivity(ctx, storeId, 'removed ' + p.name); }
 });
 
 // Clears shoppers, carts, orders and the bag feed for one store (staff) or everywhere (admin, storeId '').
 export const resetDemo = spacetimedb.reducer({ storeId: t.string() }, (ctx, { storeId }) => {
-  if (storeId) requireStaff(ctx, storeId); else requireAdmin(ctx);
+  if (storeId) requireOwner(ctx, storeId); else requireAdmin(ctx);
   const match = (s: string) => !storeId || s === storeId;
   for (const r of [...(storeId ? ctx.db.cartItem.storeId.filter(storeId) : ctx.db.cartItem.iter())]) ctx.db.cartItem.id.delete(r.id);
   for (const r of [...(storeId ? ctx.db.bagEvent.storeId.filter(storeId) : ctx.db.bagEvent.iter())]) ctx.db.bagEvent.id.delete(r.id);
   for (const r of [...ctx.db.orderLine.iter()]) if (match(r.storeId)) ctx.db.orderLine.id.delete(r.id);
   for (const r of [...ctx.db.shopOrder.iter()]) if (match(r.storeId)) ctx.db.shopOrder.id.delete(r.id);
   for (const r of [...(storeId ? ctx.db.shopper.storeId.filter(storeId) : ctx.db.shopper.iter())]) ctx.db.shopper.identity.delete(r.identity);
+  if (storeId) logActivity(ctx, storeId, 'reset the demo data');
 });
 
 // Load-test helpers (admin only): n stores on a grid around a point, ids prefixed "lt-".
@@ -602,4 +725,202 @@ export const clearLoadTest = spacetimedb.reducer({ count: t.u32() }, (ctx, { cou
     removeStore(ctx, s.id);
     if (++n >= count) break;
   }
+});
+
+
+// ───────────────────────── Accounts, teams, activity (v4, additive) ─────────────────────────
+// Sign-in: connect with a SpacetimeAuth id_token. The account is filled automatically on connect and
+// again by sign_in (the console calls it right after connecting). Phones can adopt the same flow later:
+// connect with an id_token from the same SpacetimeAuth client and call sign_in once; the shop_* procedures
+// are unchanged and simply run under the signed-in identity, so orders then carry a named shopper.
+function setRecentDays(ctx: Ctx) {
+  const ms0 = Number(ctx.timestamp.microsSinceUnixEpoch / 1000n);
+  const v = [1, 0, -1, -2].map((k) => new Date(ms0 + k * 86400000).toISOString().slice(0, 10)).join(',');
+  const c = ctx.db.config.key.find('recent_days');
+  if (!c) ctx.db.config.insert({ key: 'recent_days', value: v }); else if (c.value !== v) ctx.db.config.key.update({ key: 'recent_days', value: v });
+}
+export const onConnect = spacetimedb.clientConnected((ctx) => {
+  try { setRecentDays(ctx); } catch (_e) {}
+  const jwt = (ctx.senderAuth as any)?.jwt;
+  if (jwt && jwt.issuer === AUTH_ISSUER && !verifiedClaims(ctx)) throw new SenderError('This sign-in belongs to a different app.');
+  try { doSignIn(ctx); } catch (_e) { /* a profile problem never blocks a connection */ }
+});
+
+export const signIn = spacetimedb.reducer((ctx) => {
+  if (!doSignIn(ctx)) throw new SenderError('Not signed in with this app’s SpacetimeAuth login.');
+});
+
+export const setDisplayName = spacetimedb.reducer({ name: t.string() }, (ctx, { name }) => {
+  const n = name.trim().slice(0, 60);
+  if (!n) throw new SenderError('Name can’t be empty.');
+  if (!ctx.db.account.identity.find(ctx.sender)) throw new SenderError('Sign in first.');
+  const p = ctx.db.memberName.identity.find(ctx.sender);
+  if (p) ctx.db.memberName.identity.update({ identity: ctx.sender, name: n }); else ctx.db.memberName.insert({ identity: ctx.sender, name: n });
+  const a = ctx.db.account.identity.find(ctx.sender)!;
+  ctx.db.account.identity.update({ ...a, name: n });
+});
+
+// Admin: which SpacetimeAuth client ids this database accepts (comma-separated).
+export const setAuthClients = spacetimedb.reducer({ ids: t.string() }, (ctx, { ids }) => {
+  requireAdmin(ctx);
+  const v = ids.split(',').map((x) => x.trim()).filter(Boolean).join(',').slice(0, 500);
+  const c = ctx.db.config.key.find('auth_client_ids');
+  if (c) ctx.db.config.key.update({ key: 'auth_client_ids', value: v }); else ctx.db.config.insert({ key: 'auth_client_ids', value: v });
+});
+
+// Invite a teammate by email: they become staff the moment they sign in with that (verified) email.
+export const inviteStaff = spacetimedb.reducer({ storeId: t.string(), email: t.string() }, (ctx, { storeId, email }) => {
+  requireStaff(ctx, storeId);
+  const e = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) || e.length > 120) throw new SenderError('That doesn’t look like an email address.');
+  for (const a of ctx.db.account.email.filter(e)) {
+    for (const s of ctx.db.storeStaff.identity.filter(a.identity)) if (s.storeId === storeId) throw new SenderError('They’re already on the team.');
+  }
+  for (const inv of ctx.db.staffEmailInvite.email.filter(e)) if (inv.storeId === storeId) return;
+  let pending = 0;
+  for (const _i of ctx.db.staffEmailInvite.storeId.filter(storeId)) pending++;
+  if (pending >= 50) throw new SenderError('Too many pending invites for this store.');
+  ctx.db.staffEmailInvite.insert({ id: 0n, storeId, email: e, invitedBy: actorName(ctx).slice(0, 60), at: ctx.timestamp });
+  logActivity(ctx, storeId, 'invited ' + e);
+});
+
+export const revokeStaffInvite = spacetimedb.reducer({ id: t.u64() }, (ctx, { id }) => {
+  const inv = ctx.db.staffEmailInvite.id.find(id);
+  if (!inv) return;
+  requireStaff(ctx, inv.storeId);
+  ctx.db.staffEmailInvite.id.delete(id);
+  logActivity(ctx, inv.storeId, 'cancelled the invite for ' + inv.email);
+});
+
+// Remove a teammate (or yourself: leave the store).
+export const removeStaff = spacetimedb.reducer({ storeId: t.string(), member: t.identity() }, (ctx, { storeId, member }) => {
+  requireStaff(ctx, storeId);
+  const self = member.isEqual(ctx.sender);
+  let memberOwns = false;
+  for (const o of ctx.db.storeOwner.identity.filter(member)) if (o.storeId === storeId) memberOwns = true;
+  if (!self) requireOwner(ctx, storeId);
+  if (memberOwns && !isAdmin(ctx)) throw new SenderError(self ? 'Owners can’t leave their store. Delete it, or ask an admin.' : 'The owner can’t be removed.');
+  if (self && !isAdmin(ctx)) {
+    let owners = 0, staff = 0;
+    for (const _o of ctx.db.storeOwner.storeId.filter(storeId)) owners++;
+    for (const _s of ctx.db.storeStaff.storeId.filter(storeId)) staff++;
+    if (owners === 0 && staff <= 1) throw new SenderError('You’re the only one on this team, so you can’t leave it.');
+  }
+  for (const s of [...ctx.db.storeStaff.identity.filter(member)]) {
+    if (s.storeId !== storeId) continue;
+    const p = ctx.db.memberName.identity.find(member);
+    const who = member.isEqual(ctx.sender) ? 'left the team' : 'removed ' + (p ? p.name : 'Staff ·' + shortHex(member)) + ' from the team';
+    logActivity(ctx, storeId, who);
+    ctx.db.storeStaff.id.delete(s.id);
+  }
+});
+
+// The caller's own account (one row, even when signed out).
+const AccountSummary = t.row('AccountSummary', {
+  key: t.string().primaryKey(), signedIn: t.bool(), name: t.string(), email: t.string(), picture: t.string(), admin: t.bool(), shortId: t.string(),
+});
+export const myAccount = spacetimedb.view({ name: 'my_account', public: true }, t.array(AccountSummary), (ctx) => {
+  const a = ctx.db.account.identity.find(ctx.sender);
+  const p = ctx.db.memberName.identity.find(ctx.sender);
+  return [{ key: 'me', signedIn: !!a, name: p ? p.name : (a ? a.name : ''), email: a ? a.email : '', picture: a ? a.picture : '', admin: !!ctx.db.operator.identity.find(ctx.sender), shortId: shortHex(ctx.sender) }];
+});
+
+function managedStores(ctx: any): string[] {
+  if (ctx.db.operator.identity.find(ctx.sender)) {
+    const ids: string[] = [];
+    for (const s of ctx.db.storeStaff.identity.filter(ctx.sender)) ids.push(s.storeId);
+    for (const st of ctx.db.store.iter()) if (!st.id.startsWith('lt-') && !ids.includes(st.id)) ids.push(st.id);
+    return ids;
+  }
+  return [...ctx.db.storeStaff.identity.filter(ctx.sender)].map((s: any) => s.storeId);
+}
+
+// Team of every store the caller manages: members (names only, no emails) and pending email invites.
+const TeamRow = t.row('TeamRow', {
+  key: t.string().primaryKey(), storeId: t.string(), kind: t.string(), name: t.string(), email: t.string(),
+  member: t.identity(), inviteId: t.u64(), isYou: t.bool(),
+});
+export const myTeam = spacetimedb.view({ name: 'my_team', public: true }, t.array(TeamRow), (ctx) => {
+  const out: any[] = [];
+  for (const storeId of managedStores(ctx)) {
+    for (const s of ctx.db.storeStaff.storeId.filter(storeId)) {
+      const p = ctx.db.memberName.identity.find(s.identity);
+      let owns = false;
+      for (const o of ctx.db.storeOwner.identity.filter(s.identity)) if (o.storeId === storeId) owns = true;
+      out.push({ key: storeId + ':m:' + s.identity.toHexString(), storeId, kind: owns ? 'owner' : 'member', name: p ? p.name : 'Staff ·' + shortHex(s.identity), email: '',
+        member: s.identity, inviteId: 0n, isYou: s.identity.isEqual(ctx.sender) });
+    }
+    for (const inv of ctx.db.staffEmailInvite.storeId.filter(storeId)) {
+      out.push({ key: storeId + ':i:' + inv.id, storeId, kind: 'invite', name: '', email: inv.email, member: ctx.sender, inviteId: inv.id, isYou: false });
+    }
+  }
+  return out;
+});
+
+// Recent changes (last 7 days) in the stores the caller manages.
+const ActivityRow = t.row('ActivityRow', { id: t.u64().primaryKey(), storeId: t.string(), actorName: t.string(), action: t.string(), isYou: t.bool(), at: t.timestamp() });
+export const myStoreActivity = spacetimedb.view({ name: 'my_store_activity', public: true }, t.array(ActivityRow), (ctx) => {
+  const out: any[] = [];
+  for (const storeId of managedStores(ctx)) {
+    const rows = [...ctx.db.activity.storeId.filter(storeId)].sort((a, b) => (a.id < b.id ? 1 : -1)).slice(0, 40);
+    for (const a of rows) out.push({ id: a.id, storeId, actorName: a.actorName, action: a.action, isYou: a.actor.isEqual(ctx.sender), at: a.at });
+  }
+  return out;
+});
+
+
+// Names of signed-in shoppers seen in the stores the caller manages (current shoppers and recent orders).
+// Guests and other stores never see names: shoppers stay "Guest ·abc123" for them.
+const PersonRow = t.row('PersonRow', { key: t.string().primaryKey(), storeId: t.string(), who: t.identity(), name: t.string() });
+export const myStorePeople = spacetimedb.view({ name: 'my_store_people', public: true }, t.array(PersonRow), (ctx) => {
+  const out: any[] = [];
+  for (const storeId of managedStores(ctx)) {
+    const seen = new Set<string>();
+    const add = (who: any) => {
+      const h = who.toHexString();
+      if (seen.has(h)) return;
+      seen.add(h);
+      const n = ctx.db.memberName.identity.find(who);
+      if (n) out.push({ key: storeId + ':' + h, storeId, who, name: n.name });
+    };
+    for (const sh of ctx.db.shopper.storeId.filter(storeId)) add(sh.identity);
+    const days = (ctx.db.config.key.find('recent_days') || { value: '' }).value.split(',').filter(Boolean);
+    for (const day of days) for (const o of ctx.db.shopOrder.by_store_day.filter([storeId, day])) add(o.shopper);
+  }
+  return out;
+});
+
+
+// The server's clock, so consoles can measure "commit → screen" honestly even when the laptop clock is off.
+export const serverTime = spacetimedb.procedure(t.i64(), (ctx) => ctx.timestamp.microsSinceUnixEpoch);
+
+// Invites addressed to the caller's verified email. Nothing happens until they accept.
+const InviteRow = t.row('InviteRow', { id: t.u64().primaryKey(), storeId: t.string(), storeName: t.string(), invitedBy: t.string() });
+export const myInvites = spacetimedb.view({ name: 'my_invites', public: true }, t.array(InviteRow), (ctx) => {
+  const a = ctx.db.account.identity.find(ctx.sender);
+  if (!a || !a.emailVerified || !a.email) return [];
+  const out: any[] = [];
+  for (const inv of ctx.db.staffEmailInvite.email.filter(a.email)) {
+    const st = ctx.db.store.id.find(inv.storeId);
+    if (st) out.push({ id: inv.id, storeId: inv.storeId, storeName: st.name, invitedBy: inv.invitedBy });
+  }
+  return out;
+});
+function ownInvite(ctx: Ctx, id: bigint) {
+  if (!authOk(ctx)) throw new SenderError('Sign in again.');
+  const inv = ctx.db.staffEmailInvite.id.find(id);
+  const a = ctx.db.account.identity.find(ctx.sender);
+  if (!inv || !a || !a.emailVerified || a.email !== inv.email) throw new SenderError('That invite isn’t for this account.');
+  return inv;
+}
+export const acceptInvite = spacetimedb.reducer({ id: t.u64() }, (ctx, { id }) => {
+  const inv = ownInvite(ctx, id);
+  if (!ctx.db.store.id.find(inv.storeId)) { ctx.db.staffEmailInvite.id.delete(id); return; }   // store is gone: just drop the invite
+  if (addStaff(ctx, ctx.sender, inv.storeId)) logActivity(ctx, inv.storeId, 'joined the team (invited by ' + inv.invitedBy + ')');
+  ctx.db.staffEmailInvite.id.delete(id);
+});
+export const declineInvite = spacetimedb.reducer({ id: t.u64() }, (ctx, { id }) => {
+  const inv = ownInvite(ctx, id);
+  ctx.db.staffEmailInvite.id.delete(id);
+  logActivity(ctx, inv.storeId, 'declined the invite for ' + inv.email);
 });
