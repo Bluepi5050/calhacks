@@ -9,35 +9,48 @@ It (1) writes media/screens/<platform>-<id>.webp (+ -dark.webp when a dark rende
 Order of PAGES = order of the screens (left to right, then row by row). Every page needs a render
 for BOTH platforms (the gallery always shows every page for the chosen platform). Wide screens show
 one row of up to 6; more pages wrap into balanced rows (11 pages -> 6 + 5). Dark renders are optional per platform and page;
-when one is missing, that screen stays light in dark mode. Use a platform's dark set only when
-it covers every page, or the tour switches between light and dark screens.
+when one is missing, that screen stays light in dark mode. Give a platform dark renders for every
+page or for none, so the gallery never mixes light and dark screens.
 Needs Pillow. Not deployed (hidden by _redirects, not in the deploy ZIP).
 """
 import json, os, re
 from PIL import Image
 
-I = "/cloudspace/smartbag/ios-ui/final/"                 # iPhone 1.1 reference renders (HTML mirror, 390x844 @2x)
-A = "/cloudspace/smartbag/android-ui/final/411-light/"   # Android 3.1 renders (Robolectric, 411 dp)
-AD = "/cloudspace/smartbag/android-ui/final/411-dark/"
+I = "/cloudspace/smartbag/ios-ui/1.2/"                   # iPhone 1.2 reference renders (HTML mirror, not a compiled build)
+I1 = "/cloudspace/smartbag/ios-ui/final/"                # iPhone 1.1 reference renders (receipt; unchanged in 1.2)
+A = "/cloudspace/smartbag/android-ui/3.2/411-light/"     # Android 3.2 renders (Robolectric, 411 dp)
+AD = "/cloudspace/smartbag/android-ui/3.2/411-dark/"
 
 PAGES = [
     # id, label (caption under the screen), alt (platform-neutral; the page adds "Bag It on Android/iPhone"),
-    # android/ios: light render, optional dark render (None = keep light)
+    # android/ios: (light render, dark render or None = keep light)
     dict(id="welcome", label="Welcome",
-         alt="Welcome screen: The bag that checks you out. It lists what the app needs (Bluetooth, location, notifications) and a Get started button.",
-         android=(A + "01-welcome.png", AD + "01-welcome.png"), ios=(I + "01-welcome.png", None)),
-    dict(id="in-store", label="In store",
-         alt="In the store: You’re at Bayside Grocer, bag connected, the bag is empty: Drop something in.",
-         android=(A + "08-in-store-empty.png", AD + "08-in-store-empty.png"), ios=(I + "09-in-store-empty.png", None)),
+         alt="Welcome screen: The bag that checks you out, three steps (drop it in, it knows, walk out), and buttons to create an account or log in.",
+         android=(A + "20-welcome.png", AD + "20-welcome.png"), ios=(I + "20-welcome-signed-out.png", I + "20-welcome-signed-out-dark.png")),
+    dict(id="create-account", label="Create account",
+         alt="Create account: name, email and password; your cards and bags stay with your account on any phone.",
+         android=(A + "21-create-account.png", AD + "21-create-account.png"), ios=(I + "21-create-account.png", I + "21-create-account-dark.png")),
+    dict(id="log-in", label="Log in",
+         alt="Log in with email and password, showing the message for a wrong password.",
+         android=(A + "23-log-in-error.png", AD + "23-log-in-error.png"), ios=(I + "23-log-in.png", I + "23-log-in-dark.png")),
+    dict(id="pair", label="Pair your bag",
+         alt="Pair your bag: bags nearby, with the one right next to the phone at the top, and a demo bag option.",
+         android=(A + "25-pair-scan.png", AD + "25-pair-scan.png"), ios=(I + "25-pair-scan.png", I + "25-pair-scan-dark.png")),
     dict(id="shopping", label="Shopping",
          alt="Shopping at Bayside Grocer: each item appears with its price as it goes in the bag, one item isn’t sold there and won’t be charged, and the total says Just walk out.",
-         android=(A + "09-filling.png", AD + "09-filling.png"), ios=(I + "11-filling.png", None)),
-    dict(id="leaving", label="Leaving",
-         alt="Leaving Bayside Grocer: the bag is charged as you leave; step back inside to keep shopping.",
-         android=(A + "10-leaving.png", AD + "10-leaving.png"), ios=(I + "12-leaving.png", None)),
+         android=(A + "34-tabs-shop-filling.png", AD + "34-tabs-shop-filling.png"), ios=(I + "33-shop-tab.png", I + "33-shop-tab-dark.png")),
     dict(id="receipt", label="Receipt",
-         alt="Receipt: Paid as you left Bayside Grocer with a demo card, an exit code to show staff if asked, and Done.",
-         android=(A + "11-receipt-paid.png", AD + "11-receipt-paid.png"), ios=(I + "13-receipt-paid.png", None)),
+         alt="Receipt: Paid as you left Bayside Grocer with a demo card, an exit code to show staff if asked, and the items.",
+         android=(A + "11-receipt-paid.png", AD + "11-receipt-paid.png"), ios=(I1 + "13-receipt-paid.png", I1 + "16-receipt-dark.png")),
+    dict(id="trips", label="Trips",
+         alt="Trips: past trips by day with store, time, number of items and total.",
+         android=(A + "38-trips.png", AD + "38-trips.png"), ios=(I + "37-trips.png", I + "37-trips-dark.png")),
+    dict(id="wallet", label="Wallet",
+         alt="Wallet: the card that pays when you walk out, other saved cards, Add a card, and a note that payments are simulated.",
+         android=(A + "40-wallet.png", AD + "40-wallet.png"), ios=(I + "39-wallet.png", I + "39-wallet-dark.png")),
+    dict(id="account", label="Account",
+         alt="Account: your name and email, your bags with Pair a bag, app permissions, Sign out and Delete account.",
+         android=(A + "43-account.png", AD + "43-account.png"), ios=(I + "42-account.png", I + "42-account-dark.png")),
 ]
 WIDTH = 560          # about 2x the largest display width (~250 px at 2 columns on a tablet)
 HEIGHT = 1213        # display box ratio; renders are cropped/fit to WIDTH x HEIGHT

@@ -37,19 +37,16 @@ The step row in #demo shows five stills cut from the recorded trip (`media/steps
 "Get the app" shows every app screen at once in a gallery (one row of up to 6 on wide screens, rows of 3 on tablets, 2 columns on phones; more pages wrap into balanced rows), with the Android | iPhone selector below it. The selector swaps which platform's gallery is shown (heading "Android app" / "iPhone app") and the panel under it (Android: download + QR; iPhone: not available yet). Default platform: iPhone for iOS user agents and links to `#get-iphone`, otherwise Android. Without JavaScript: the Android gallery and both panels.
 
 - **One page list:** `PAGES` at the top of `tools/make-screens.py` (id, caption label, platform-neutral alt text, Android render, iPhone render, optional dark render per platform). Run `python3 tools/make-screens.py`. It writes `media/screens/<android|ios>-<id>[-dark].webp` (560 px wide, about 20 KB), regenerates both galleries in index.html (between the `<!-- GALLERY -->` markers; first row of the Android gallery eager, everything else lazy, width/height set) and deletes stale files. Order of the list = order on the page.
-- **Adding pages** (Sign up, Shop, Trips, Wallet, Account, Pair your bag when Android 3.2 / iPhone 1.2 land): append entries with a render for BOTH platforms. A page that exists on only one platform can't be in the gallery.
-- **Dark mode:** Android has a full dark set, so its screens follow the visitor's theme. iPhone dark renders exist for only two pages, so the iPhone gallery stays light in both themes rather than mixing; add `ios` dark renders when a full set exists.
+- **Adding pages:** append entries with a render for BOTH platforms. A page that exists on only one platform can't be in the gallery. Current list (9): Welcome, Create account, Log in, Pair your bag, Shopping, Receipt, Trips, Wallet, Account (5 + 4 on wide screens, 3 × 3 on tablets, 2 columns on phones).
+- **Dark mode:** both platforms have a dark render for every page, so the gallery follows the visitor's theme. Give a platform dark renders for every page or none, so the gallery never mixes.
 - Android renders have a placeholder status-bar clock in the top-left corner; the tool blanks that strip (`BLANK_TOP`) because the frame's rounded corner would cut it.
-- Current sources: iPhone 1.1 reference renders (`/cloudspace/smartbag/ios-ui/final/`, HTML mirror; the iPhone gallery heading says they're previews of the app in development; change that once screens come from a real build) and Android 3.1 renders (`/cloudspace/smartbag/android-ui/final/411-light|411-dark`).
+- Current sources: Android 3.2 renders (`/cloudspace/smartbag/android-ui/3.2/411-light|411-dark`); iPhone 1.2 reference renders (`/cloudspace/smartbag/ios-ui/1.2/`, HTML mirror, not a compiled build) plus the 1.1 receipt (`ios-ui/final/13-receipt-paid`, `16-receipt-dark`; no 1.2 receipt render). The iPhone gallery heading says the screens are previews of the app in development; change that once screens come from a real build. The Log in screens show the wrong-password message on both platforms (Android has no clean Log in render).
 
 ## iPhone availability
 There is no App Store or TestFlight build: the iPhone panel says "The iPhone app isn’t available to download yet. It’s coming to the App Store." with no badge or link. When the app is live, replace the `<p class="plain">` in the `#get-iphone` panel with the App Store link, and update the hero fine print, the meta description, the FAQ "Which phones does it work with?" and the iPhone script branch at the bottom of index.html.
 
-## When accounts, Wallet and pairing ship (prepared, not on the page yet)
-These features are not in the released apps yet, so the page does not mention them. When they ship:
-1. The FAQ "Why does the app need my location?" says "There's no account: the app uses an anonymous identity." Rewrite it.
-2. The Android install note ("open the app near your bag and tap Connect bag") and "The app can't find my bag." should follow the new pairing screen's wording.
-3. "Will I be charged?" says no card is ever entered. If the Wallet lets people save cards, say how they're used during early access (still simulated?).
-4. Optional setup line, ready to paste under the Get the app intro (`.head`), only once all three steps are real in both apps:
-   `<p class="label" style="margin-top:20px">Set up in a minute</p><ol class="steps">…</ol>` with three items: "Create your account", "Pair your bag", "Add a card". The `.steps` style from How it works can be reused.
-5. Add the new screens to `PAGES` (above).
+## Accounts, Wallet and pairing (live in Android 3.2 and iPhone 1.2 source)
+The page describes them: setup line under Get the app, FAQ "Do I need an account?", "How do I connect my bag?", "Will I be charged?" (Wallet, simulated payments, only type/last four/expiry kept) and the location/privacy answer (trips and approximate location are public test data; email, password and saved cards private). Push notifications are still being built: don't mention receipt notifications until they ship.
+
+## Android download
+`downloads/bag-it.apk` is Android 3.2 (versionCode 5, minSdk 26 = Android 8.0, 6.8 MB). To update: replace the file (same name; the QR stays valid) and the version line in the Android panel.
