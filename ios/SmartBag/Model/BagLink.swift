@@ -107,7 +107,7 @@ final class BagLink: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     private func reflect(_ s: CBManagerState) {
         switch s {
         case .poweredOff: state = .problem("Turn on Bluetooth to connect your bag.")
-        case .unauthorized: state = .problem("Allow Bluetooth for SmartBag in Settings.")
+        case .unauthorized: state = .problem("Allow Bluetooth for Bag It in Settings.")
         case .unsupported: state = .problem("This phone has no Bluetooth.")
         default: break                                                       // unknown / resetting: wait
         }
@@ -180,7 +180,7 @@ final class BagLink: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     func peripheral(_ p: CBPeripheral, didDiscoverServices error: Error?) {
         guard let svc = p.services?.first(where: { $0.uuid == Self.nus }) else {
             wantConnected = false
-            state = .problem("That device isn't a SmartBag.")
+            state = .problem("That isn't a Bag It bag.")
             central?.cancelPeripheralConnection(p)
             return
         }
@@ -192,7 +192,7 @@ final class BagLink: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         rx = chars.first { $0.uuid == Self.rxUUID }
         guard let tx = chars.first(where: { $0.uuid == Self.txUUID }) else {
             wantConnected = false
-            state = .problem("That device isn't a SmartBag.")
+            state = .problem("That isn't a Bag It bag.")
             central?.cancelPeripheralConnection(p)
             return
         }

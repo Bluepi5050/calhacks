@@ -31,9 +31,9 @@ public enum SmartBagError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .unavailable(let m), .connectionLost(let m): return m
-        case .timeout: return "SmartBag didn't answer in time."
+        case .timeout: return "Bag It didn't answer in time."
         case .server(let m): return String(m.prefix(160))
-        case .decode(let m): return "Unexpected reply from SmartBag (\(m))."
+        case .decode(let m): return "Unexpected reply from Bag It (\(m))."
         }
     }
 }

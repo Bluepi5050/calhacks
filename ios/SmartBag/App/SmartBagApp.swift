@@ -1,4 +1,4 @@
-// SmartBagApp.swift: customer-only SmartBag app. No store picker, no catalog, no Pay button:
+// SmartBagApp.swift: Bag It, the customer-only SmartBag app. No store picker, no catalog, no Pay button:
 // the database finds the store from the phone's location and charges the bag when the phone leaves.
 
 import SwiftUI
@@ -31,17 +31,12 @@ struct SmartBagApp: App {
                         onboarded = true
                         model.start()
                     }
-                } else if let r = model.paid {
-                    ReceiptScreen(receipt: r) { model.finishReceipt() }
-                        .transition(.move(edge: .bottom))
                 } else {
                     ShopView()
                 }
             }
             .environmentObject(model)
-            .preferredColorScheme(.light)
-            .tint(Theme.accent)
-            .animation(.easeInOut(duration: 0.25), value: model.paid?.orderId)
+            .tint(Theme.ink)                 // the walk-out receipt is presented by ShopView
         }
         .onChange(of: phase) { p in
             if p == .active && onboarded { model.start(); model.foreground() }

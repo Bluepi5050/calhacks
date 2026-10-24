@@ -44,6 +44,7 @@ func check(_ ok: Bool, _ what: String) { print((ok ? "  ok   " : "  FAIL ") + wh
     m.foreground()
     await settle()
     check(m.paid == nil, "same receipt is not shown twice")
+    check(m.lastReceipt?.orderId == r.orderId, "Last trip keeps the latest receipt after Done")
     print("  status line: \(m.statusLine) · exit pass \(r.exitPass)")
 }
 

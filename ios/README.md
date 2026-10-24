@@ -1,6 +1,6 @@
-# SmartBag for iPhone
+# Bag It for iPhone (SmartBag)
 
-Native SwiftUI customer app for SmartBag (Cal Hacks 13.0). Drop groceries in the bag and just walk out:
+Native SwiftUI customer app for SmartBag (Cal Hacks 13.0), shown on the home screen as **Bag It** (the brand of bagitwith.us). Drop groceries in the bag and just walk out:
 the SpacetimeDB module `smartcart-5dt35` finds the store from the phone's location, prices the bag, and
 charges it the moment the phone leaves. There is no Pay button, no store picker, no catalog.
 
@@ -21,11 +21,11 @@ No third-party dependencies: URLSessionWebSocketTask, CoreBluetooth, CoreLocatio
    - If iOS says "Untrusted Developer": Settings > General > VPN & Device Management > your Apple ID > Trust.
 5. Free-team signing lasts 7 days; after that, press Run again from Xcode to re-sign.
 
-In the app: Get started, then allow Bluetooth, Location ("Allow While Using App", keep Precise on) and
-Notifications. iOS then offers "Change to Always Allow": accept it for the most reliable pocket walk-out.
+In the app: Get started, then one screen per permission: Allow Bluetooth, Allow Location ("Allow While Using App", keep Precise on;
+accept "Change to Always Allow" when iOS offers it, for the most reliable pocket walk-out) and Allow Notifications (or Not now).
 
-Demo without hardware (hidden, same as Android): long-press the bag chip (top right) to drop a random item;
-long-press the store name to simulate walking out (two accurate fixes 300 m north, real GPS paused for 60 s),
+Demo without hardware (hidden): hold the bag chip (top right) for 1 s to drop a random item;
+hold the store name for 1.5 s to simulate walking out (both are also VoiceOver custom actions) (two accurate fixes 300 m north, real GPS paused for 60 s),
 which charges the bag, shows the receipt with its exit-pass QR, sends `PAID <code>` to the bag and posts a notification.
 
 ## How it works
@@ -39,7 +39,7 @@ which charges the bag, shows the receipt with its exit-pass QR, sends `PAID <cod
 | `SmartBag/Model/PhoneLocation.swift` | Continuous best-accuracy updates that keep running in the background; asks While Using, then Always; temporary full accuracy if Precise is off. |
 | `SmartBag/Model/Notify.swift` | "Paid $X at Store" local notification (also shown in the foreground). |
 | `SmartBag/Model/KeychainTokenStore.swift` | SpacetimeDB identity token in the Keychain (AfterFirstUnlock, so it works while locked). |
-| `SmartBag/Views/*` | Welcome ("Skip the checkout line"), shop screen with WalkOutBar, receipt screen with CoreImage QR `SMARTBAG-EXIT:code:id:total`. |
+| `SmartBag/Views/*` | 1.1 design (spec: Firebase `apps/smart-bag/app/mobile-design/ios`). Theme (Bag It tokens, slot mark, wordmark, pills), Welcome + one priming screen per permission, Shop (hero by store state, newest-first bag list, walk-out dock whose bag mark mirrors the bag's light), Receipt (peak + end, exit pass QR `SMARTBAG-EXIT:code:id:total`). |
 | `project.yml` | XcodeGen spec; `SmartBag.xcodeproj` was generated from it. |
 | `tools/verify-linux.sh`, `Tests/` | Linux/macOS verification (below). |
 
@@ -71,3 +71,11 @@ PhoneLocation, Notify and the Keychain store were reviewed but not compiled. Exp
   Keep SmartBag open in the background during a demo, and don't swipe it away.
 - Approximate location (Precise off) can't identify the store; the app shows a hint and asks for temporary full accuracy.
 - Not yet run on a physical iPhone or bag hardware.
+
+## 1.1 design (Bag It)
+
+- Name on the home screen and in copy: **Bag It**. `SmartBag` remains only in machine ids (bundle id, BLE name, repo paths).
+- Visual system: zinc neutrals, ink pills, one coral (#E8654A) that means only the bag's light (the slot in the mark, the item flash, the leaving line); green/red only for real status. Four Dynamic Type sizes (34/22/17/13), two weights, SF Mono for money and codes. Light and dark.
+- The bag mark in the dock is a live copy of the bag's LED: it blinks when an item is accepted and breathes while you're leaving. On the receipt its slot lights at the moment of the charge (the bag gets `PAID` at the same time), with the success haptic.
+- `design/render_reference.py` renders an HTML mirror of each key screen (NOT a build) for design review; screenshots in Mana Storage `smartbag/ios-ui/`.
+- 1.1 has not been compiled by Xcode yet: SwiftUI can't be built on Linux. Every Swift file passes `swiftc -parse`, and `tools/verify-linux.sh` (core client + ShopModel live trip) passes. Expect possible small compile fixes on the first Xcode build.

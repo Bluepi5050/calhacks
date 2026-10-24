@@ -42,6 +42,7 @@ final class ShopModel: ObservableObject {
     @Published private(set) var count = 0
     @Published private(set) var lines: [CartLine] = []
     @Published private(set) var paid: Receipt?              // receipt to show after a walk-out
+    @Published private(set) var lastReceipt: Receipt?       // latest walk-out order, for "Last trip" (UI only)
     @Published private(set) var flash: Flash?
     @Published private(set) var syncError: String?
     @Published private(set) var preciseLocationOff = false
@@ -83,7 +84,7 @@ final class ShopModel: ObservableObject {
                     try await op()
                     self.syncError = nil
                 } catch {
-                    let message = (error as? LocalizedError)?.errorDescription ?? "Couldn't reach SmartBag."
+                    let message = (error as? LocalizedError)?.errorDescription ?? "Couldn't reach Bag It."
                     self.syncError = message
                     if self.store == .locating { self.store = .offline(message) }
                 }
@@ -103,7 +104,6 @@ final class ShopModel: ObservableObject {
     func start() {
         guard !started else { return }
         started = true
-        Notify.shared.requestPermission()
         location.start()
         link.connect()
     }
@@ -131,12 +131,13 @@ final class ShopModel: ObservableObject {
         // Receipts: show one only when the database has charged a NEW walk-out since we last looked.
         let seen = (defaults.object(forKey: "seen_order") as? NSNumber)?.int64Value
         let r = s.lastReceipt
+        lastReceipt = r
         let rid = Int64(bitPattern: r?.orderId ?? 0)
         if let r, let seen, rid > seen {
             paid = r
             link.send("PAID \(r.code)")
             Notify.shared.paid(r)
-            UINotificationFeedbackGenerator().notificationOccurred(r.isPaid ? .success : .warning)
+            // The success/warning haptic plays in ReceiptScreen, at the moment the slot lights.
         }
         if seen == nil || (r != nil && rid > (seen ?? 0)) { defaults.set(NSNumber(value: rid), forKey: "seen_order") }
     }
@@ -146,7 +147,7 @@ final class ShopModel: ObservableObject {
         case let .inStore(_, name, _, leaving):
             if leaving { return "Leaving \(name)…" }
             return count > 0 ? "\(name) · \(money(total)) in your bag · just walk out" : "Shopping at \(name)"
-        case .away: return "Not in a SmartBag store"
+        case .away: return "Not in a Bag It store"
         default: return "Watching your bag"
         }
     }
