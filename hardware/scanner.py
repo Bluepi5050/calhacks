@@ -112,6 +112,32 @@ def close_transport(transport):
         close()
 
 
+def _smoothed_fps(fps, interval):
+    """Exponential moving average of the frame rate; 0 means no estimate yet."""
+    if interval <= 0:
+        return fps
+    instant = 1.0 / interval
+    return instant if fps == 0 else 0.8 * fps + 0.2 * instant
+
+
+def _track_and_cross(detections, frame_width, frame_height, now, tracker, geometry,
+                     crossing_detector, event_processor):
+    """Update tracks, detect a bag crossing and emit its event. Returns (tracks, status)."""
+    tracks = tracker.update(detections, frame_width, frame_height, timestamp=now)
+    relevant = [t for t in tracks if geometry.in_scan_region(
+        (t.centroid[0] / frame_width, t.centroid[1] / frame_height)
+    )]
+    crossing = crossing_detector.update(
+        tracks, expired_track_ids=tracker.expired_track_ids, ambiguous=len(relevant) > 1
+    )
+    status = crossing_detector.last_status
+    if crossing is not None:
+        event_processor.process(crossing)
+        status = event_processor.last_status
+        crossing_detector.set_track_event_status(crossing.track_id, status)
+    return tracks, status
+
+
 def _draw(frame, tracks, geometry, crossing_detector, status, counts, fps,
           camera_fps=None):
     height, width = frame.shape[:2]
@@ -184,12 +210,8 @@ def _run_live_camera_preview(capture, detector, tracker, crossing_detector,
                     raise RuntimeError("camera frame capture failed")
                 now = time.perf_counter()
                 with lock:
-                    if previous is not None and now > previous:
-                        instant = 1.0 / (now - previous)
-                        camera_state["fps"] = (
-                            instant if camera_state["fps"] == 0
-                            else 0.8 * camera_state["fps"] + 0.2 * instant
-                        )
+                    if previous is not None:
+                        camera_state["fps"] = _smoothed_fps(camera_state["fps"], now - previous)
                     camera_state["frame"] = frame
                     camera_state["sequence"] += 1
                 previous = now
@@ -221,28 +243,13 @@ def _run_live_camera_preview(capture, detector, tracker, crossing_detector,
                               if d.class_name in products]
                 now = time.perf_counter()
                 with lock:
-                    tracks = tracker.update(
-                        detections, frame_width, frame_height, timestamp=now
+                    tracks, status = _track_and_cross(
+                        detections, frame_width, frame_height, now, tracker, geometry,
+                        crossing_detector, event_processor,
                     )
-                    relevant = [track for track in tracks if geometry.in_scan_region(
-                        (track.centroid[0] / frame_width,
-                         track.centroid[1] / frame_height)
-                    )]
-                    crossing = crossing_detector.update(
-                        tracks, expired_track_ids=tracker.expired_track_ids,
-                        ambiguous=len(relevant) > 1,
-                    )
-                    status = crossing_detector.last_status
-                    if crossing is not None:
-                        event_processor.process(crossing)
-                        status = event_processor.last_status
-                        crossing_detector.set_track_event_status(crossing.track_id, status)
-                    if previous_inference is not None and now > previous_inference:
-                        instant = 1.0 / (now - previous_inference)
-                        inference_state["fps"] = (
-                            instant if inference_state["fps"] == 0
-                            else 0.8 * inference_state["fps"] + 0.2 * instant
-                        )
+                    if previous_inference is not None:
+                        inference_state["fps"] = _smoothed_fps(
+                            inference_state["fps"], now - previous_inference)
                     inference_state["tracks"] = tracks
                     inference_state["status"] = status
                 previous_inference = now
@@ -272,7 +279,6 @@ def _run_live_camera_preview(capture, detector, tracker, crossing_detector,
     actual_fps = capture.get(cv2.CAP_PROP_FPS)
     preview_fps = min(requested_fps, actual_fps) if actual_fps and actual_fps > 0 else requested_fps
     target_interval = 1.0 / preview_fps
-    last_render = time.perf_counter()
     try:
         while not stop.is_set():
             loop_start = time.perf_counter()
@@ -302,9 +308,6 @@ def _run_live_camera_preview(capture, detector, tracker, crossing_detector,
             elapsed = time.perf_counter() - loop_start
             if elapsed < target_interval:
                 time.sleep(target_interval - elapsed)
-            now = time.perf_counter()
-            if now > last_render:
-                last_render = now
     finally:
         stop.set()
         capture_thread.join(timeout=1.0)
@@ -389,25 +392,13 @@ def run_scanner(detector, source, product_names, geometry: ScanGeometry, *,
         for frame in frames:
             frame_height, frame_width = frame.shape[:2]
             now = time.perf_counter()
-            interval = now - previous_time
+            fps = _smoothed_fps(fps, now - previous_time)
             previous_time = now
-            if interval > 0:
-                measured = 1.0 / interval
-                fps = measured if fps == 0 else 0.8 * fps + 0.2 * measured
             detections = [d for d in detector.detect(frame) if d.class_name in products]
-            tracks = tracker.update(detections, frame_width, frame_height, timestamp=now)
-            relevant = [t for t in tracks if geometry.in_scan_region(
-                (t.centroid[0] / frame_width, t.centroid[1] / frame_height)
-            )]
-            ambiguous = len(relevant) > 1
-            crossing = crossing_detector.update(
-                tracks, expired_track_ids=tracker.expired_track_ids, ambiguous=ambiguous
+            tracks, status = _track_and_cross(
+                detections, frame_width, frame_height, now, tracker, geometry,
+                crossing_detector, event_processor,
             )
-            status = crossing_detector.last_status
-            if crossing is not None:
-                event_processor.process(crossing)
-                status = event_processor.last_status
-                crossing_detector.set_track_event_status(crossing.track_id, status)
             if preview and not headless:
                 _draw(frame, tracks, geometry, crossing_detector, status,
                       event_processor.counts, fps)
