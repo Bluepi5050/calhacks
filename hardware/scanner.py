@@ -85,6 +85,13 @@ def configure_capture(capture, *, width=1280, height=720, fps=30, is_camera=True
     return actual_width, actual_height
 
 
+def add_transport_argument(parser):
+    parser.add_argument("--transport", choices=("both", "console", "mock", "ble", "ble+console"),
+                        default="both",
+                        help="ble / ble+console: send events to the Bag It app over Bluetooth "
+                             "(see hardware/smartcart_ble/README.md)")
+
+
 def make_transport(mode="both"):
     if mode in ("ble", "ble+console"):
         # Bluetooth to the Bag It app (hardware/smartcart_ble, contract docs/SMARTCART-BLE.md).
