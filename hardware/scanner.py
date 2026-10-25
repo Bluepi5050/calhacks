@@ -71,6 +71,10 @@ def configure_capture(capture, *, width=1280, height=720, fps=30, is_camera=True
 
 
 def make_transport(mode="both"):
+    if mode in ("ble", "ble+console"):
+        # Bluetooth to the Bag It app (hardware/smartcart_ble, contract SMARTCART-BLE.md).
+        from .smartcart_ble.transport_adapter import BleTransport
+        return BleTransport(also=JsonLineTransport() if mode == "ble+console" else None), None
     if mode == "console":
         return CompositeTransport(JsonLineTransport()), None
     if mode == "mock":
@@ -78,6 +82,19 @@ def make_transport(mode="both"):
         return CompositeTransport(receiver), receiver
     receiver = MockTransport()
     return CompositeTransport(JsonLineTransport(), receiver), receiver
+
+
+def connect_session_hooks(transport, event_processor):
+    """BLE: a new shopping session resets the local bag counts. No-op for other transports."""
+    register = getattr(transport, "add_session_start_listener", None)
+    if callable(register):
+        register(event_processor.reset_counts)
+
+
+def close_transport(transport):
+    close = getattr(transport, "close", None)
+    if callable(close):
+        close()
 
 
 def _draw(frame, tracks, geometry, crossing_detector, status, counts, fps,
@@ -298,6 +315,7 @@ def run_scanner(detector, source, product_names, geometry: ScanGeometry, *,
     crossing_detector = CrossingDetector(geometry, products)
     transport, _mock_receiver = make_transport(transport_mode)
     event_processor = EventProcessor(transport)
+    connect_session_hooks(transport, event_processor)
     source = source_value(source)
     is_image = isinstance(source, str) and Path(source).suffix.lower() in IMAGE_SUFFIXES
     is_video_file = isinstance(source, str) and Path(source).is_file() and not is_image
@@ -387,3 +405,4 @@ def run_scanner(detector, source, product_names, geometry: ScanGeometry, *,
             capture.release()
         if preview and not headless:
             cv2.destroyAllWindows()
+        close_transport(transport)
