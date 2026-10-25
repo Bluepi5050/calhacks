@@ -587,6 +587,11 @@ class SmartCartBLE:
             log.warning("advertisement too long, retrying as '%s'", _Advertisement.VARIANTS[self._adv.variant])
             self._register_adv()
             return
+        # Some controllers can't advertise while a phone is connected. Only one phone uses the cart, so wait:
+        # the disconnect handler advertises again.
+        if self._connected_devices():
+            log.info("advertising paused while a phone is connected; it resumes when the phone disconnects")
+            return
         delay = ADV_RETRY_S[min(self._adv_attempt, len(ADV_RETRY_S) - 1)]
         self._adv_attempt += 1
         log.error("advertising failed (%s); retrying in %d s", _explain(exc), delay)
@@ -600,7 +605,7 @@ class SmartCartBLE:
 
     def _readvertise(self, gen):
         """Some controllers stop advertising after a connection; refresh it once the cart is free."""
-        if gen != self._adv_gen or self._stopping or self._connected:
+        if gen != self._adv_gen or self._stopping or self._connected or self._connected_devices():
             return False
         self._adv_gen += 1
         new_gen = self._adv_gen
@@ -640,6 +645,10 @@ class SmartCartBLE:
                                       signal_name="PropertiesChanged", arg0=DEVICE, path_keyword="path")
         self._bus.add_signal_receiver(self._on_ifaces_removed, dbus_interface=OBJ_MANAGER,
                                       signal_name="InterfacesRemoved")
+        # A phone BlueZ hasn't seen before (Android rotates its address) appears already connected, with no
+        # PropertiesChanged: without this it never counts as connected.
+        self._bus.add_signal_receiver(self._on_ifaces_added, dbus_interface=OBJ_MANAGER,
+                                      signal_name="InterfacesAdded")
 
     def _is_ours(self, path) -> bool:
         return bool(self.adapter_path) and str(path).startswith(self.adapter_path + "/")
@@ -648,6 +657,11 @@ class SmartCartBLE:
         if interface != DEVICE or not self._is_ours(path) or "Connected" not in changed:
             return
         self._set_connected(str(path), bool(changed["Connected"]))
+
+    def _on_ifaces_added(self, path, interfaces):
+        dev = interfaces.get(DEVICE)
+        if dev is not None and self._is_ours(path) and bool(dev.get("Connected", False)):
+            self._set_connected(str(path), True)
 
     def _on_ifaces_removed(self, path, interfaces):
         if DEVICE in interfaces and self._is_ours(path):
@@ -671,7 +685,7 @@ class SmartCartBLE:
             if self._session:
                 self._session.set_phone_present(bool(self._phones))
             free = not self._connected
-        if not connected and free and self._readvertise_on_disconnect and self.gatt_registered:
+        if not connected and free and (self._readvertise_on_disconnect or not self.advertising) and self.gatt_registered:
             gen = self._adv_gen
             GLib.timeout_add(READVERTISE_DELAY_MS, lambda: self._readvertise(gen))
 
