@@ -661,8 +661,7 @@ class SmartCartBLE:
 
         def back_on():
             if not self._stopping:
-                power(True)
-                self._schedule_adv_retry(1)
+                power(True)                        # the Powered signal refreshes the advertisement
             return False
         power(False)
         GLib.timeout_add(1500, back_on)
@@ -715,6 +714,10 @@ class SmartCartBLE:
                                       signal_name="PropertiesChanged", arg0=DEVICE, path_keyword="path")
         self._bus.add_signal_receiver(self._on_ifaces_removed, dbus_interface=OBJ_MANAGER,
                                       signal_name="InterfacesRemoved")
+        # Adapter powered back on (btmgmt power, rfkill, our own _reset_adapter): BlueZ drops advertisements
+        # while it is off and doesn't add them back, so advertise again.
+        self._bus.add_signal_receiver(self._on_adapter_props, dbus_interface=PROPS,
+                                      signal_name="PropertiesChanged", arg0=ADAPTER, path_keyword="path")
         # A phone BlueZ hasn't seen before (Android rotates its address) appears already connected, with no
         # PropertiesChanged: without this it never counts as connected.
         self._bus.add_signal_receiver(self._on_ifaces_added, dbus_interface=OBJ_MANAGER,
@@ -727,6 +730,30 @@ class SmartCartBLE:
         if interface != DEVICE or not self._is_ours(path) or "Connected" not in changed:
             return
         self._set_connected(str(path), bool(changed["Connected"]))
+
+    def _on_adapter_props(self, interface, changed, invalidated, path=None):
+        if interface != ADAPTER or str(path) != self.adapter_path or "Powered" not in changed:
+            return
+        if not bool(changed["Powered"]):
+            self.advertising = False
+        elif not self._stopping and self.gatt_registered:
+            log.info("adapter powered on again: advertising again")
+            GLib.timeout_add(1000, self._refresh_adv)
+
+    def _refresh_adv(self):
+        """Unregister (BlueZ may still list ours although the controller dropped it), then register again."""
+        if self._stopping or self._bus is None:
+            return False
+        self._cancel_adv_retry()
+        self._adv_gen += 1                         # answers to requests sent before this are stale
+        gen = self._adv_gen
+        mgr = dbus.Interface(self._bus.get_object(BLUEZ, self.adapter_path), ADV_MANAGER)
+
+        def again(*_):
+            if gen == self._adv_gen:
+                self._register_adv()
+        mgr.UnregisterAdvertisement(dbus.ObjectPath(self._adv.path), reply_handler=again, error_handler=again)
+        return False
 
     def _on_ifaces_added(self, path, interfaces):
         dev = interfaces.get(DEVICE)
