@@ -450,8 +450,6 @@ interface ShopActions {
     fun finishReceipt()
     fun demoDrop()
     fun demoWalkOut()
-    /** Demo: pin the phone inside the nearest store (indoor GPS drift reads as leaving). */
-    fun demoEnterStore() {}
     fun openPairing() {}
     fun openAddCard() {}
     /** The dock's "Paying with <card>" line: the card picker sheet. */
@@ -662,11 +660,6 @@ private fun StoreBlock(s: ShopUi, a: ShopActions) {
                 Txt("Not in a Bag It store", Type.title, bold = true, modifier = Modifier.semantics { heading() })
                 Spacer(Modifier.height(8.dp))
                 Txt("Walk into one and your bag starts on its own.", Type.body, p.muted, balanced = true)
-                // Demo: the store is close but indoor GPS puts the phone outside it.
-                if (st.nearestName != null) {
-                    Spacer(Modifier.height(12.dp))
-                    SmallPill("Stay in ${st.nearestName}", "Put the phone inside ${st.nearestName} for the demo") { a.demoEnterStore() }
-                }
             }
             is StoreState.InStore -> {
                 Eyebrow(if (st.leaving) "Leaving" else "You're at")
@@ -676,10 +669,10 @@ private fun StoreBlock(s: ShopUi, a: ShopActions) {
                     .pointerInput(Unit) { detectTapGestures(onLongPress = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); a.demoWalkOut() }) })
                 if (st.address.isNotBlank()) Txt(st.address, Type.caption, p.muted)
                 // Demo: walking out without leaving the room (the same as long-pressing the store name).
-                Spacer(Modifier.height(12.dp))
-                if (!st.leaving) SmallPill("Simulate walk out", "Simulate walking out of the store: pays for this trip") { a.demoWalkOut() }
-                // Indoor GPS drift reads as leaving: pin the phone in the store for the demo.
-                else SmallPill("Stay in store", "Keep the phone inside this store for the demo") { a.demoEnterStore() }
+                if (!st.leaving) {
+                    Spacer(Modifier.height(12.dp))
+                    SmallPill("Simulate walk out", "Simulate walking out of the store: pays for this trip") { a.demoWalkOut() }
+                }
             }
         }
     }
