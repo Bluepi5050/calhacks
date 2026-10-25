@@ -87,9 +87,9 @@ class CrossingDetector:
                 self.geometry.minimum_class_observations,
                 self.geometry.class_stability_ratio,
             )
-            point = (track.centroid[0], track.centroid[1])
-            width, height = track.frame_size
-            normalized = (point[0] / width, point[1] / height)
+            # The raw box center records where YOLO saw the product *now*.
+            # A smoothed center can trail across the divider after an occlusion.
+            normalized = track.last_normalized_center
             zone = self.geometry.zone_at(normalized)
             if zone is None:
                 state.candidate_zone = None

@@ -15,7 +15,7 @@ The first model run downloads `yolov8n.pt` if it is not already in the repositor
 
 ## Event-based bag crossing scanner
 
-The event scanner tracks configured products from `data/detectable_products.json`. The top half of the full frame is OUTSIDE BAG and the bottom half is INSIDE BAG. It emits `ADD` on a confirmed top-to-bottom crossing and `REMOVE` on bottom-to-top. It confirms each side over multiple observations, applies configurable centroid smoothing and a neutral hysteresis band around the boundary, and does not infer removal from a missing detection. Tracks reconnect by IoU/centroid during continuous detection. After a missed detection, class, horizontal position, elapsed time, vertical motion, box size, and competing matches govern reacquisition for up to 1.8 seconds by default. Expiry never produces an event. Multiple tracked products in the scan region suspend crossing confirmation.
+The event scanner tracks configured products from `data/detectable_products.json`. The top half of the full frame is OUTSIDE BAG and the bottom half is INSIDE BAG. It emits `ADD` on a confirmed top-to-bottom crossing and `REMOVE` on bottom-to-top. It confirms each side over multiple observations and applies a neutral hysteresis band around the boundary. It never infers removal from a missing detection. Tracks reconnect by IoU/centroid during continuous detection. After a missed detection or a slow inference interval, class, horizontal position, elapsed time, vertical motion, box size, and competing matches govern reacquisition for up to 1.8 seconds by default. Expiry never produces an event. Multiple tracked products in the scan region suspend crossing confirmation.
 
 Run the Logitech webcam with the annotated preview:
 
@@ -42,7 +42,7 @@ Edit `data/scan_geometry.json` to adjust normalized `x1`, `y1`, `x2`, `y2` zone 
 
 ### Occlusion and crossing tuning
 
-The tracker retains a missing object's last normalized center, recent movement, class observations, and box size. A new detection can reclaim that track without box overlap if its class agrees and the elapsed time, horizontal offset, vertical speed, and box size are plausible. Similar competing matches are rejected. A crossing then requires two clear observations in the destination zone, a previously confirmed source zone, the correct sign of vertical movement (positive Y for ADD), at least `minimum_crossing_distance` of **vertical** travel, and intersection with the configured boundary. This reduces duplicate events after dropouts; it cannot prove identity when two nearly identical objects overlap or exchange places, so such cases are suppressed when ambiguous.
+The tracker retains timestamped normalized box centers, recent movement, class observations, and box size. A detection can reclaim that track without box overlap if its class agrees and the elapsed time, horizontal offset, vertical speed, and box size are plausible. This also works when inference skips ahead without producing an explicit empty-detection frame. Moderate perspective growth or shrinkage is allowed; similar competing matches are rejected. Crossing zones use the current measured box center, while a short median history reduces noise. A crossing requires two clear observations in the destination zone, a previously confirmed source zone, the correct sign of vertical movement (positive Y for ADD), at least `minimum_crossing_distance` of **vertical** travel, and intersection with the configured boundary. A missing object alone never produces an event. If the object is entirely invisible inside the bag, the camera cannot confirm the destination zone; it cannot prove identity when two nearly identical objects overlap or exchange places either.
 
 The starting values in `data/scan_geometry.json` are experimental. All distances below use normalized frame coordinates:
 
@@ -57,11 +57,11 @@ The starting values in `data/scan_geometry.json` are experimental. All distances
 | `maximum_reacquisition_distance` | Maximum vertical jump after a gap | `0.65` |
 | `maximum_reacquisition_horizontal_distance` | Maximum horizontal offset after a gap | `0.15` |
 | `maximum_vertical_speed` | Maximum plausible vertical travel per second | `1.5` |
-| `maximum_box_size_ratio` | Largest allowed width or height scale change | `2.0` |
+| `maximum_box_size_ratio` | Largest allowed width or height scale change | `3.0` |
 | `reassociation_min_confidence` | Minimum composite match score, 0 to 1 | `0.55` |
 | `association_ambiguity_margin` | Reject competing matches whose costs differ by no more than this | `0.12` |
 
-The loader supplies backward compatible defaults when these new keys are absent. For diagnostic track IDs, Y movement, elapsed time, association decisions, zone changes, and event decisions, add `--tracking-debug` to either scanner command. Normal runs do not print tracking diagnostics. A new BLE shopping session or session stop queues a reset of active track and crossing history on the scanner loop; it does not change the BLE protocol.
+The loader supplies backward compatible defaults when these new keys are absent. For diagnostic track IDs, Y movement, elapsed time, association decisions, zone changes, and event decisions, add `--tracking-debug` to either scanner command. These timestamps and measured positions provide the proposed delta-Y snapshots without saving full camera images. Normal runs do not print tracking diagnostics. A new BLE shopping session or session stop queues a reset of active track and crossing history on the scanner loop; it does not change the BLE protocol.
 
 ### Recognition-only comparison mode
 
@@ -99,7 +99,7 @@ Run all hardware unit tests from Git Bash at the repository root:
 ./.venv/Scripts/python.exe -m unittest discover -s hardware/tests -v
 ```
 
-Tests cover tracking association, 0.5- and 1.5-second dropouts and expiry, class stability, stationary products, top-to-bottom ADD and bottom-to-top REMOVE crossings, jitter at the center boundary, missing detections, repeated identical products, unsupported classes, ambiguity suppression, shopping-session reset, and rejecting REMOVE when no matching item is in the local bag. Crossing behavior is checked at 640x480, 1280x720, and 1920x1080 to confirm normalized geometry. No camera, model weights, GPU, or Bluetooth is needed for these unit tests.
+Tests cover tracking association, 0.5- and 1.5-second dropouts and expiry, a slow inference interval without an empty-detection frame, box growth/shrinkage during occluded entry/exit, class stability, stationary products, top-to-bottom ADD and bottom-to-top REMOVE crossings, jitter at the center boundary, missing detections, repeated identical products, unsupported classes, ambiguity suppression, shopping-session reset, and rejecting REMOVE when no matching item is in the local bag. Crossing behavior is checked at 640x480, 1280x720, and 1920x1080 to confirm normalized geometry. No camera, model weights, GPU, or Bluetooth is needed for these unit tests.
 
 For physical validation, run the webcam command above, present a whitelisted object well inside the OUTSIDE BAG top zone, move it downward fully through the yellow center boundary, and hold it in the INSIDE BAG bottom zone. Move it upward to test REMOVE. Repeat with a brief occlusion, stationary placement, and two objects near the opening. Video replay uses `--source path/to/clip.mp4`; tune `scan_geometry.json` to match the camera framing before relying on events.
 

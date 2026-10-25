@@ -50,7 +50,7 @@ class HybridHarness:
         tracks = self.tracker.update(objects, WIDTH, HEIGHT, timestamp=self.time)
         if ambiguous is None:
             relevant = [track for track in tracks if self.geometry.in_scan_region(
-                (track.centroid[0] / WIDTH, track.centroid[1] / HEIGHT)
+                track.last_normalized_center
             )]
             ambiguous = len(relevant) > 1
         crossing = self.crossing.update(
@@ -105,6 +105,43 @@ class HybridTrackingTests(unittest.TestCase):
         scanner.move([0.75] * 4)
         self.assertEqual(scanner.actions, ["ADD"])
         self.assertIn(original_id, scanner.tracker.tracks)
+
+    def test_slow_inference_interval_without_empty_frame_recovers_add(self):
+        scanner = HybridHarness()
+        scanner.move([0.25, 0.3, 0.38])
+        original_id = next(iter(scanner.tracker.tracks))
+        scanner.at(0.75, dt=0.7)
+        scanner.move([0.75] * 3)
+        self.assertEqual(scanner.actions, ["ADD"])
+        self.assertTrue(scanner.tracker.tracks[original_id].observed)
+
+    def test_apple_box_grows_during_occluded_entry(self):
+        scanner = HybridHarness()
+        scanner.move([0.25, 0.3, 0.38])
+        original_id = next(iter(scanner.tracker.tracks))
+        scanner.step(dt=0.7)
+        for _ in range(3):
+            scanner.at(0.75, x=0.55, box_size=0.19)
+        self.assertEqual(scanner.actions, ["ADD"])
+        self.assertTrue(scanner.tracker.tracks[original_id].observed)
+
+    def test_apple_box_shrinks_during_occluded_exit(self):
+        scanner = HybridHarness()
+        scanner.add_apple()
+        scanner.move([0.75] * 5)
+        original_id = next(iter(scanner.tracker.tracks))
+        scanner.at(0.22, x=0.54, box_size=0.04, dt=0.7)
+        for _ in range(2):
+            scanner.at(0.22, x=0.54, box_size=0.04)
+        self.assertEqual(scanner.actions, ["ADD", "REMOVE"])
+        self.assertTrue(scanner.tracker.tracks[original_id].observed)
+
+    def test_two_clear_inside_observations_after_gap_are_enough(self):
+        scanner = HybridHarness()
+        scanner.move([0.3, 0.35])
+        scanner.step(dt=0.4)
+        scanner.move([0.64, 0.64])
+        self.assertEqual(scanner.actions, ["ADD"])
 
     def test_upward_crossing_after_gap_emits_remove(self):
         scanner = HybridHarness()

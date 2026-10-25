@@ -53,7 +53,7 @@ class ScanGeometry:
     maximum_reacquisition_distance: float = 0.65
     maximum_reacquisition_horizontal_distance: float = 0.15
     maximum_vertical_speed: float = 1.5
-    maximum_box_size_ratio: float = 2.0
+    maximum_box_size_ratio: float = 3.0
     reassociation_min_confidence: float = 0.55
     association_ambiguity_margin: float = 0.12
 
@@ -112,7 +112,7 @@ class ScanGeometry:
             "maximum_reacquisition_horizontal_distance": float(raw.get(
                 "maximum_reacquisition_horizontal_distance", 0.15)),
             "maximum_vertical_speed": float(raw.get("maximum_vertical_speed", 1.5)),
-            "maximum_box_size_ratio": float(raw.get("maximum_box_size_ratio", 2.0)),
+            "maximum_box_size_ratio": float(raw.get("maximum_box_size_ratio", 3.0)),
             "reassociation_min_confidence": float(raw.get("reassociation_min_confidence", 0.55)),
             "association_ambiguity_margin": float(raw.get("association_ambiguity_margin", 0.12)),
         }

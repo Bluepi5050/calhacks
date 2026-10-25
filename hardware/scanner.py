@@ -171,7 +171,7 @@ def _draw(frame, tracks, geometry, crossing_detector, status, counts, fps,
         )
         name = stable_name or track.class_name
         cv2.rectangle(frame, (bx1, by1), (bx2, by2), (0, 180, 255), 2)
-        point = (track.centroid[0] / width, track.centroid[1] / height)
+        point = track.last_normalized_center
         track_status = crossing_detector.track_status(track.track_id, point)
         lines = (
             "#{} {} {:.2f}".format(track.track_id, name, track.confidence),
@@ -262,8 +262,7 @@ def _run_live_camera_preview(capture, detector, tracker, crossing_detector,
                         detections, current_width, current_height, timestamp=now
                     )
                     relevant = [track for track in tracks if geometry.in_scan_region(
-                        (track.centroid[0] / current_width,
-                         track.centroid[1] / current_height)
+                        track.last_normalized_center
                     )]
                     crossing = crossing_detector.update(
                         tracks, expired_track_ids=tracker.expired_track_ids,
@@ -476,7 +475,7 @@ def run_scanner(detector, source, product_names, geometry: ScanGeometry, *,
             detections = [d for d in detector.detect(frame) if d.class_name in products]
             tracks = tracker.update(detections, frame_width, frame_height, timestamp=now)
             relevant = [t for t in tracks if geometry.in_scan_region(
-                (t.centroid[0] / frame_width, t.centroid[1] / frame_height)
+                t.last_normalized_center
             )]
             ambiguous = len(relevant) > 1
             crossing = crossing_detector.update(
