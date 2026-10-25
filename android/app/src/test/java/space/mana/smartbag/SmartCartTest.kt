@@ -1,0 +1,328 @@
+package space.mana.smartbag
+
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.*
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+/** SmartCart contract v1.1 on the phone: codec, GATT serialization, and the reconcile/ack/queue state machine with a fake GATT. */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = android.app.Application::class)
+class SmartCartTest {
+    class MemStore(var json: String? = null) : QueueStore { override fun load() = json; override fun save(json: String) { this.json = json } }
+
+    /** Fake GATT + fake backend around one CartSync. */
+    class Rig(store: MemStore = MemStore()) {
+        val writes = mutableListOf<String>()
+        val backend = mutableListOf<String>()          // "sid:seq action label" in call order
+        val order = mutableListOf<String>()            // backend calls and ACK writes interleaved, to check "ACK after answer"
+        var offline = false
+        var answer: (QueuedEvent) -> HwOutcome = { HwOutcome("accepted", "") }
+        val log = mutableListOf<String>()
+        val sync = CartSync(
+            write = { writes += it; order += "W $it" },
+            forward = { e -> if (offline) throw java.io.IOException("offline"); backend += "${e.sid}:${e.seq} ${e.action} ${e.label}"; order += "B ${e.sid}:${e.seq}"; answer(e) },
+            store = store, log = { log += it })
+        fun pump() = runBlocking { sync.pump() }
+    }
+
+    @Test fun codec() {
+        assertEquals(CartProtocol.Event(17, "A", "apple", 93), CartProtocol.event("17|A|apple|93"))
+        assertEquals(CartProtocol.Event(18, "R", "cell phone", 0), CartProtocol.event("18|R|cell phone|0"))
+        listOf("", "1|A|apple", "0|A|apple|9", "1000000|A|apple|9", "1|X|apple|9", "1|A|Apple|9", "1|A|apple|101", "1|A||9", "x|A|apple|9",
+            "1|A|apple|9|extra", "1|A|abcdefghijklmnopqrstu|9").forEach { assertNull(it, CartProtocol.event(it)) }
+        assertEquals(CartProtocol.Status.State("s1k9", true, 17, 0, "SmartCart-3F2A"), CartProtocol.status("S|s1k9|ACTIVE|17|0|SmartCart-3F2A"))
+        assertEquals(CartProtocol.Status.State(null, false, 0, 0, "SmartCart-3F2A"), CartProtocol.status("S|-|IDLE|0|0|SmartCart-3F2A"))
+        assertEquals(CartProtocol.Status.OkStart("s1"), CartProtocol.status("OK|START|s1"))
+        assertEquals(CartProtocol.Status.OkStop("s1"), CartProtocol.status("OK|STOP|s1"))
+        assertEquals(CartProtocol.Status.Err("BUSY", "scanner restarting"), CartProtocol.status("ERR|BUSY|scanner restarting"))
+        listOf("S|s1|RUNNING|1|0|x", "S|S1|ACTIVE|1|0|x", "OK|PAUSE|s1", "OK|START|S!", "HELLO", "S|s1|ACTIVE|x|0|n").forEach { assertNull(it, CartProtocol.status(it)) }
+        assertEquals("START|s1k9|bayside-grocer", CartProtocol.start("s1k9", "bayside-grocer"))
+        assertEquals("STOP|s1k9", CartProtocol.stop("s1k9")); assertEquals("ACK|s1k9|17", CartProtocol.ack("s1k9", 17)); assertEquals("SYNC", CartProtocol.SYNC)
+        listOf({ CartProtocol.start("S1", "x") }, { CartProtocol.start("s1", "Bay Side") }, { CartProtocol.ack("s1", 0) }, { CartProtocol.stop("toolongsession1") })
+            .forEach { f -> try { f(); fail("accepted a bad message") } catch (_: IllegalArgumentException) {} }
+        // Every message we can produce fits the 60-byte limit.
+        assertTrue(CartProtocol.start("a".repeat(12), "b".repeat(32)).toByteArray().size <= CartProtocol.MAX_MSG)
+        assertEquals("Cart 3F2A", bagDisplayName("SmartCart-3F2A")); assertEquals("Bag 3F2A", bagDisplayName("SmartBag-3F2A"))
+    }
+
+    @Test fun gattOpsRunOneAtATime() {
+        val ran = mutableListOf<GattOp>()
+        val q = GattQueue({ ran += it; it !is GattOp.Read })        // Android refuses the read: it's skipped, not stuck
+        q.add(GattOp.Mtu); q.add(GattOp.Discover); q.add(GattOp.Notify(CartProtocol.STATUS)); q.add(GattOp.Notify(CartProtocol.EVENTS))
+        assertEquals(listOf<GattOp>(GattOp.Mtu), ran)                 // nothing else starts until the MTU callback
+        q.done(); assertEquals(GattOp.Discover, ran.last())
+        q.done(); assertEquals(GattOp.Notify(CartProtocol.STATUS), ran.last())
+        q.add(GattOp.Write("SYNC"))
+        assertEquals(3, ran.size)                                     // CCCD writes are serialized: EVENTS waits for STATUS
+        q.done(); assertEquals(GattOp.Notify(CartProtocol.EVENTS), ran.last())
+        q.add(GattOp.Read(CartProtocol.STATUS))
+        q.done(); q.done()
+        assertEquals(listOf("MTU", "DISCOVER"), ran.take(2).map { it.toString() })
+        assertEquals(GattOp.Write("SYNC"), ran[4]); assertEquals(GattOp.Read(CartProtocol.STATUS), ran[5])
+        assertNull("refused op skipped, queue idle", q.current); assertEquals(0, q.size)
+    }
+
+    @Test fun lifecycleReconcileAckAndStop() {
+        val r = Rig(); val s = r.sync
+        // Connected outside a store, cart idle: nothing to write.
+        s.onConnected(); s.onStatus("S|-|IDLE|0|0|SmartCart-3F2A")
+        assertTrue(r.writes.isEmpty())
+        // Entering the store: backend session s1 → START.
+        s.setSession("s1", "bayside-grocer")
+        assertEquals(listOf("START|s1|bayside-grocer"), r.writes)
+        // An event before OK|START is ignored and not acked.
+        assertEquals("ignored: no confirmed session", s.onEvent("1|A|apple|93"))
+        s.onStatus("OK|START|s1")
+        assertEquals("s1", s.confirmed)
+        assertEquals("queued", s.onEvent("1|A|apple|93"))
+        assertEquals("duplicate, already queued", s.onEvent("1|A|apple|93"))
+        assertTrue(r.pump())
+        assertEquals(listOf("s1:1 A apple"), r.backend)
+        assertEquals(listOf("B s1:1", "W ACK|s1|1"), r.order.drop(1))  // ACK only after the backend answered
+        // The cart resends 1 (its ACK was lost): acked again, no second backend call.
+        assertEquals("resent, acked again", s.onEvent("1|A|apple|93"))
+        assertEquals(1, r.backend.size); assertEquals("ACK|s1|1", r.writes.last())
+        // Every terminal status is acked (unknown product, invalid remove, stale, rejected).
+        r.answer = { HwOutcome(listOf("unknown_product", "invalid_remove", "rejected")[(it.seq - 2).toInt()], "") }
+        listOf("2|A|cell phone|71", "3|R|orange|88", "4|A|apple|90").forEach { s.onEvent(it) }
+        r.pump()
+        assertEquals(listOf("ACK|s1|2", "ACK|s1|3", "ACK|s1|4"), r.writes.takeLast(3))
+        // Walk-out: STOP, and later events are ignored (no confirmed session).
+        s.setSession(null, null)
+        assertEquals("STOP|s1", r.writes.last())
+        assertEquals("ignored: no confirmed session", s.onEvent("5|A|apple|90"))
+        assertEquals(4, r.backend.size)
+    }
+
+    @Test fun offlineQueueKeepsOrderAndSurvivesRestart() {
+        val mem = MemStore()
+        val r = Rig(mem)
+        r.sync.onConnected(); r.sync.setSession("s7", "mission-fresh"); r.sync.onStatus("OK|START|s7")
+        r.offline = true
+        listOf("1|A|apple|90", "2|A|banana|90", "3|R|apple|90").forEach { r.sync.onEvent(it) }
+        assertFalse(r.pump())
+        assertTrue("no ACK for unprocessed events", r.writes.none { it.startsWith("ACK") })
+        assertEquals(3, r.sync.pending.size)
+        // App restarts: the persisted queue comes back in order and is forwarded once the backend is reachable.
+        val r2 = Rig(mem)
+        assertEquals(listOf(1L, 2L, 3L), r2.sync.pending.map { it.seq })
+        r2.sync.onConnected(); r2.sync.setSession("s7", "mission-fresh"); r2.sync.onStatus("OK|START|s7")
+        assertTrue(r2.pump())
+        assertEquals(listOf("s7:1 A apple", "s7:2 A banana", "s7:3 R apple"), r2.backend)
+        assertEquals(listOf("ACK|s7|1", "ACK|s7|2", "ACK|s7|3"), r2.writes.filter { it.startsWith("ACK") })
+        assertEquals("[]", mem.json)
+    }
+
+    @Test fun reconnectReconciles() {
+        val r = Rig(); val s = r.sync
+        s.setSession("s2", "bayside-grocer")
+        assertTrue("not connected: nothing written", r.writes.isEmpty())
+        // Reconnect while the cart still runs s2: START resumes it.
+        s.onConnected(); s.onStatus("S|s2|ACTIVE|5|1|SmartCart-3F2A")
+        assertEquals(listOf("START|s2|bayside-grocer"), r.writes)
+        s.onStatus("OK|START|s2"); assertEquals("s2", s.confirmed)
+        // Disconnect + reconnect: confirmation is gone until the cart answers again.
+        s.onDisconnected(); assertNull(s.confirmed)
+        assertEquals("ignored: no confirmed session", s.onEvent("6|A|apple|90"))
+        s.onConnected(); s.onStatus("S|s2|ACTIVE|6|1|SmartCart-3F2A"); s.onStatus("OK|START|s2")
+        assertEquals("queued", s.onEvent("6|A|apple|90"))
+        // An ERR clears the pending START; the next STATUS tries again.
+        s.setSession("s3", "bayside-grocer"); assertEquals("START|s3|bayside-grocer", r.writes.last())
+        s.onStatus("ERR|BAD_SID|unknown session")
+        s.onStatus("S|s2|ACTIVE|6|0|SmartCart-3F2A"); assertEquals("START|s3|bayside-grocer", r.writes.last())
+        assertEquals(2, r.writes.count { it == "START|s3|bayside-grocer" })
+        s.onStatus("OK|START|s3")
+        // The cart later reports another session (it was restarted by someone else): start ours again.
+        s.onStatus("S|-|IDLE|0|0|SmartCart-3F2A"); assertNull(s.confirmed); assertEquals("START|s3|bayside-grocer", r.writes.last())
+        // No session on the phone but the cart is ACTIVE (e.g. after a walk-out while disconnected): STOP it.
+        val r2 = Rig(); r2.sync.onConnected(); r2.sync.onStatus("S|s9|ACTIVE|3|2|SmartCart-3F2A")
+        assertEquals(listOf("STOP|s9"), r2.writes)
+        // A session id the cart can't take is never sent.
+        val r3 = Rig(); r3.sync.onConnected(); r3.sync.setSession("S-UPPER", "bayside-grocer"); assertTrue(r3.writes.isEmpty())
+    }
+
+    @Test fun lostSessionV12() {
+        // known from the backend's lastSeq: a cart that comes back IDLE has lost the session → hook, no START|s5.
+        val r = Rig(); val s = r.sync
+        var asked: String? = null
+        s.onLost = { asked = it; true }
+        s.setSession("s5", "bayside-grocer", lastSeq = 7)
+        s.onConnected(); s.onStatus("S|-|IDLE|0|0|SmartCart-3F2A")
+        assertEquals("s5", asked); assertTrue(r.writes.none { it.startsWith("START") })
+        // Same sid but behind what we know (last_seq 3 < 7): lost too.
+        asked = null; s.onDisconnected(); s.onConnected(); s.onStatus("S|s5|ACTIVE|3|0|SmartCart-3F2A")
+        assertEquals("s5", asked)
+        // Cart at or ahead of what we know: an ordinary resume.
+        s.onLost = { fail("not lost"); true }
+        s.onDisconnected(); s.onConnected(); s.onStatus("S|s5|ACTIVE|9|0|SmartCart-3F2A")
+        assertEquals("START|s5|bayside-grocer", r.writes.last())
+        s.onStatus("OK|START|s5")
+        // Mid-session STATUS notification behind the highest seq the phone received: lost.
+        listOf("10|A|apple|90", "11|A|apple|90", "12|A|banana|90").forEach { s.onEvent(it) }
+        assertEquals(12L, s.known("s5"))
+        asked = null; s.onLost = { asked = it; true }
+        s.onStatus("S|s5|ACTIVE|11|0|SmartCart-3F2A")
+        assertNull(s.confirmed); assertEquals("s5", asked)
+        // Nothing numbered yet (known 0): plain START, never a rekey.
+        val r2 = Rig(); r2.sync.onLost = { fail("known is 0"); true }
+        r2.sync.onConnected(); r2.sync.setSession("s8", "bayside-grocer"); r2.sync.onStatus("S|-|IDLE|0|0|SmartCart-3F2A")
+        assertEquals("START|s8|bayside-grocer", r2.writes.last())
+        // ERR|BUSY: wait for the reconnect, no SYNC.
+        val n = r2.writes.size; r2.sync.onStatus("ERR|BUSY|cart shutting down"); assertEquals(n, r2.writes.size)
+        assertTrue(CartRules.REKEY_LOST_SESSION)
+    }
+
+    /** v1.2 rekey end to end against MockCart: cart reboots mid-trip → drain → rekey → START new sid → seq 1 counts. */
+    @Test fun rekeyAfterCartRestart() {
+        val fwd = mutableListOf<String>(); val writes = mutableListOf<String>()
+        val statuses = ArrayDeque<String>(); val events = ArrayDeque<String>()
+        var mock = MockCart("SmartCart-3F2A", { statuses += it }, { events += it })
+        var lostSid: String? = null
+        val sync = CartSync(write = { writes += it; mock.control(it) },
+            forward = { e -> fwd += "${e.sid}:${e.seq} ${e.label}"; HwOutcome(if (e.sid == "s1") "accepted" else if (e.sid == "s2") "accepted" else "no_session", "") },
+            store = MemStore())
+        sync.onLost = { lostSid = it; true }
+        fun drain() { while (statuses.isNotEmpty() || events.isNotEmpty()) { statuses.removeFirstOrNull()?.let(sync::onStatus); events.removeFirstOrNull()?.let(sync::onEvent) } }
+        sync.onConnected(); sync.setSession("s1", "bayside-grocer"); sync.onStatus(mock.status()); drain()
+        mock.crossing("A", "apple"); mock.crossing("A", "banana"); drain()
+        // The cart reboots before the backend answered event 2 (still queued on the phone).
+        runBlocking { sync.pump() }
+        mock.crossing("A", "orange"); drain()                    // seq 3 queued, not yet forwarded
+        sync.onDisconnected()
+        mock = MockCart("SmartCart-3F2A", { statuses += it }, { events += it })   // fresh after restart: IDLE
+        sync.onConnected(); sync.onStatus(mock.status()); drain()
+        assertEquals("s1", lostSid); assertFalse("no START of the lost sid", mock.active)
+        // The model's handler: drain the old sid, rekey, set the new session.
+        assertTrue(runBlocking { sync.drain("s1") })
+        assertEquals(listOf("s1:1 apple", "s1:2 banana", "s1:3 orange"), fwd)
+        sync.setSession("s2", "bayside-grocer", lastSeq = 0); drain()
+        assertEquals("START|s2|bayside-grocer", writes.last { it.startsWith("START") }); assertEquals("s2", sync.confirmed)
+        mock.crossing("A", "apple"); drain(); runBlocking { sync.pump() }
+        assertEquals("s2:1 apple", fwd.last()); assertEquals("ACK|s2|1", writes.last())
+    }
+
+    /** Contract §6 acceptance flow against MockCart (the Jetson stand-in) and a fake backend that keeps a cart. */
+    @Test fun acceptanceWithMockCart() {
+        val cartQty = mutableMapOf<String, Int>()
+        lateinit var sync: CartSync
+        val events = ArrayDeque<String>(); val statuses = ArrayDeque<String>()
+        val mock = MockCart("SmartCart-3F2A", { statuses += it }, { events += it })
+        var activeSid: String? = null
+        val acked = mutableListOf<String>()
+        sync = CartSync(write = { m -> if (m.startsWith("ACK")) acked += m; mock.control(m) },
+            forward = { e ->
+                when {
+                    e.sid != activeSid -> HwOutcome("stale_session", "")
+                    e.action == "A" -> { cartQty.merge(e.label, 1, Int::plus); HwOutcome("accepted", "") }
+                    (cartQty[e.label] ?: 0) == 0 -> HwOutcome("invalid_remove", "")
+                    else -> { cartQty.merge(e.label, -1, Int::plus); HwOutcome("accepted", "") }
+                }
+            }, store = MemStore())
+        fun drain() { while (statuses.isNotEmpty() || events.isNotEmpty()) { statuses.removeFirstOrNull()?.let(sync::onStatus); events.removeFirstOrNull()?.let(sync::onEvent) }; runBlocking { sync.pump() } }
+        // Connected outside the store: no session, apple moving does nothing.
+        sync.onConnected(); sync.onStatus(mock.status()); drain()
+        assertFalse(mock.crossing("A", "apple"))
+        // Enter the store: session + START.
+        activeSid = "s1"; sync.setSession("s1", "bayside-grocer"); drain()
+        assertTrue(mock.active); assertEquals("s1", sync.confirmed)
+        mock.crossing("A", "apple"); drain()
+        assertEquals(1, cartQty["apple"]); assertEquals(0, mock.unackedCount)
+        mock.crossing("R", "apple"); drain()
+        assertEquals(0, cartQty["apple"])
+        mock.crossing("R", "apple"); drain()                             // nothing to remove: invalid_remove, still acked
+        assertEquals(0, mock.unackedCount)
+        // Disconnect mid-trip; the cart keeps events; reconnect resumes and the resent events arrive after OK.
+        sync.onDisconnected()
+        mock.crossing("A", "banana"); events.clear()                     // lost on the air
+        sync.onConnected(); sync.onStatus(mock.status()); drain()
+        assertEquals(1, cartQty["banana"]); assertEquals(0, mock.unackedCount)
+        // Walk out: STOP; further detections change nothing.
+        activeSid = null; sync.setSession(null, null); drain()
+        assertFalse(mock.active)
+        assertFalse(mock.crossing("A", "apple")); drain()
+        assertEquals(mapOf("apple" to 0, "banana" to 1), cartQty)
+        assertEquals(listOf("ACK|s1|1", "ACK|s1|2", "ACK|s1|3", "ACK|s1|4"), acked)
+    }
+
+    @Test fun budgetAndAmounts() {
+        assertEquals(2550, parseCents("25.50")); assertEquals(2500, parseCents("$25")); assertEquals(0, parseCents(""))
+        assertNull(parseCents("25.555")); assertNull(parseCents("-3")); assertNull(parseCents("abc"))
+        assertEquals("$8.82 left of your $20.00 budget" to false, budgetText(2000, 1118))
+        assertEquals("$2.30 over your $20.00 budget" to true, budgetText(2000, 2230))
+        assertNull(budgetText(0, 500))
+    }
+
+    @Test fun reviewFixes() {
+        var clock = 0L
+        val writes = mutableListOf<String>(); val fwd = mutableListOf<String>()
+        var fail: Exception? = null
+        val s = CartSync(write = { writes += it }, forward = { e -> fail?.let { f -> fail = null; throw f }; fwd += "${e.sid}:${e.seq}"; HwOutcome("accepted", "") },
+            store = MemStore(), now = { clock })
+        s.onConnected(); s.onStatus("S|-|IDLE|0|0|SmartCart-3F2A")
+        s.setSession("s1", "bayside-grocer")
+        // An ERR (answering something else) between START and OK doesn't lose the confirmation.
+        s.onStatus("ERR|BAD_SID|ack for old session"); assertEquals("SYNC", writes.last())
+        s.onStatus("OK|START|s1"); assertEquals("s1", s.confirmed)
+        // A permanent server error finishes the event (acked) instead of blocking the queue forever.
+        s.onEvent("1|A|apple|90"); s.onEvent("2|A|banana|90")
+        fail = ProcedureError("Bag It needs an update to read this reply.")
+        assertTrue(runBlocking { s.pump() })
+        assertEquals(listOf("s1:2"), fwd); assertEquals(listOf("ACK|s1|1", "ACK|s1|2"), writes.filter { it.startsWith("ACK") })
+        assertEquals("error", s.lastOutcome?.status.let { "error" })
+        // A network failure is not permanent: the event stays queued.
+        s.onEvent("3|A|apple|90"); fail = java.io.IOException("offline")
+        assertFalse(runBlocking { s.pump() }); assertEquals(1, s.pending.size)
+        // OK|STOP for our session (e.g. the test screen's STOP): unconfirmed, START again.
+        s.onStatus("OK|STOP|s1"); assertNull(s.confirmed); assertEquals("START|s1|bayside-grocer", writes.last())
+        s.onStatus("OK|START|s1")
+        // Session changes while an old-sid event is queued: it is still forwarded, but not acked to a cart that dropped it.
+        s.setSession("s2", "bayside-grocer"); s.onStatus("S|s2|IDLE|0|0|SmartCart-3F2A")
+        val acksBefore = writes.count { it.startsWith("ACK") }
+        assertTrue(runBlocking { s.pump() })
+        assertEquals("s1:3", fwd.last()); assertEquals(acksBefore, writes.count { it.startsWith("ACK") })
+        // Watchdog: a START that is never answered is retried via SYNC → STATUS → START.
+        val n = writes.size
+        s.watchdog(); assertEquals(n, writes.size)                    // still within 5 s
+        clock += 6000; s.watchdog(); assertEquals("SYNC", writes.last())
+        s.onStatus("S|-|IDLE|0|0|SmartCart-3F2A"); assertEquals("START|s2|bayside-grocer", writes.last())
+        s.onStatus("OK|START|s2"); assertEquals("s2", s.confirmed)
+        clock += 60_000; val m = writes.size; s.watchdog(); assertEquals("confirmed: watchdog quiet", m, writes.size)
+    }
+
+    @Test fun mtuPolicy() {
+        assertEquals(MtuPolicy.Next.DISCOVER, MtuPolicy.next(247, 0, false, 30))
+        assertEquals(MtuPolicy.Next.DISCOVER, MtuPolicy.next(64, 64, false, 30))
+        assertEquals("an explicit small MTU can't carry the protocol", MtuPolicy.Next.TOO_SMALL, MtuPolicy.next(23, 23, false, 34))
+        assertEquals("no answer, but Android already reported 517 on this link", MtuPolicy.Next.DISCOVER, MtuPolicy.next(null, 517, false, 30))
+        assertEquals("no answer: ask once more after discovery", MtuPolicy.Next.RETRY_AFTER_DISCOVERY, MtuPolicy.next(null, 0, false, 34))
+        assertEquals(MtuPolicy.Next.PROCEED, MtuPolicy.next(247, 0, true, 30))
+        assertEquals("Android 14+: proceed on its own 517 exchange (cuts still watched)", MtuPolicy.Next.PROCEED, MtuPolicy.next(null, 0, true, 34))
+        assertEquals("older Android: never guess, reconnect", MtuPolicy.Next.UNCONFIRMED, MtuPolicy.next(null, 0, true, 33))
+        assertEquals(MtuPolicy.Next.PROCEED, MtuPolicy.next(null, 185, true, 26))
+        assertEquals(MtuPolicy.Next.TOO_SMALL, MtuPolicy.next(23, 0, true, 34))
+        assertTrue(MtuPolicy.trusted(247)); assertFalse("assumed is not trusted: cuts are watched", MtuPolicy.trusted(0)); assertFalse(MtuPolicy.trusted(23))
+        // A STATUS cut to 20 bytes by MTU 23 doesn't parse: that is the tell-tale; short events that parse are fine.
+        val status = "S|s13r1|ACTIVE|17|0|SmartCart-3F2A"
+        val cut = status.toByteArray().copyOf(MtuPolicy.DEFAULT_PAYLOAD).toString(Charsets.UTF_8)
+        assertNull(CartProtocol.status(cut))
+        assertTrue(MtuPolicy.truncated(cut.toByteArray().size, CartProtocol.status(cut) != null, trusted = false))
+        assertFalse("trusted MTU: never second-guessed", MtuPolicy.truncated(20, false, trusted = true))
+        val ev = "17|A|apple|93"
+        assertFalse(MtuPolicy.truncated(ev.toByteArray().size, CartProtocol.event(ev) != null, trusted = false))
+        val ev20 = "12|A|tennis racket|91".take(20)                     // cut: still parses, with confidence 9
+        assertNotNull(CartProtocol.event(ev20))
+        assertTrue("20 bytes on an unverified link is never trusted", MtuPolicy.truncated(ev20.toByteArray().size, true, false))
+        assertNull("a STATUS without its device name is cut", CartProtocol.status("S|s13r1|ACTIVE|17|0|"))
+        // Every phone → cart message fits one write even at the smallest MTU we accept.
+        assertTrue(CartProtocol.start("a".repeat(12), "b".repeat(32)).toByteArray().size <= CartProtocol.MIN_MTU - 3)
+    }
+
+    @Test fun walkOutSignalToBag() {
+        val r = Receipt(1, "SRF6WQ", "Bayside Grocer", 1118, 2, 0, "paid", "Visa •••• 4242", 0L, emptyList())
+        assertEquals("PAID SRF6WQ", walkOutSignal(r))
+        assertEquals("DUE SRF6WQ", walkOutSignal(r.copy(status = "payment_due", payment = "")))
+    }
+}

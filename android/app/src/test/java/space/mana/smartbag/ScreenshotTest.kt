@@ -96,6 +96,15 @@ class ScreenshotTest {
         }
     }
 
+    private val cartLines = listOf(
+        line("1003", "Honeycrisp apples", 2, 249, t = 3), line("1001", "Organic bananas", 1, 129, t = 2),
+        line("cell-phone", "cell-phone", 1, 0, sold = false, t = 4), line("1010", "Sparkling water", 1, 199, t = 1))
+    private val catalog = listOf(Recommendation("1001", "Organic bananas", 129, "banana"), Recommendation("1017", "Oranges", 189, "orange"),
+        Recommendation("1010", "Sparkling water", 199, "bottle"), Recommendation("1018", "Carrots", 149, "carrot"), Recommendation("1005", "Whole milk", 469, ""))
+    private fun cartShop(budget: Int = 2000) = ui(bay, BagState.Connected("SmartCart-3F2A"), cartLines).copy(budget = budget, editable = true,
+        recs = listOf(Recommendation("1017", "Oranges", 189, "Goes with what's in your bag"), Recommendation("1018", "Carrots", 149, "Fits your budget"),
+            Recommendation("1019", "Broccoli", 229, "Popular at Bayside Grocer")))
+
     private val states: List<Pair<String, @Composable () -> Unit>> = listOf(
         "01-permissions" to { PermissionsScreen(Perms(false, false, false, false), {}, {}) },
         "02-permissions-denied" to { PermissionsScreen(Perms(true, false, false, true, canAskAgain = false), {}, {}) },
@@ -142,6 +151,27 @@ class ScreenshotTest {
         "44-bag-sheet" to { val u = app(ui(bay)); Host(u, { BagSheet(myBag, { _, _ -> }, { }, {}) }) { MainTabs(u, nop, initialTab = 3) } },
         "45-delete-account" to { val u = app(ui(bay)); Host(u, { DeleteSheet(nop, {}) }) { MainTabs(u, nop, initialTab = 3) } },
         "46-tabs-walkout-to-receipt" to { TabsFlip() },
+        // ---- 3.4: SmartCart
+        "52-cart-budget-recs" to { val s = cartShop(); Host(app(s)) { MainTabs(app(s), nop) } },
+        "53-cart-over-budget" to { val s = cartShop(budget = 700); Host(app(s)) { MainTabs(app(s), nop) } },
+        "54-cart-correct-row" to { val s = cartShop().copy(editingPreview = "1003"); Host(app(s)) { MainTabs(app(s), nop) } },
+        "55-change-item" to { val s = cartShop(); Host(app(s), { ChangeItemSheet(cartLines[0], { }, { _, _ -> }, {}, preview = catalog) }) { MainTabs(app(s), nop) } },
+        "56-budget-sheet" to { val s = cartShop(); Host(app(s), { BudgetSheet(2000, { _, _ -> }, {}) }) { MainTabs(app(s), nop) } },
+        "57-receipt-summary" to { ShopScreen(ui(StoreState.Away(null, null), paid = receipt).copy(summary = TripSummary(receipt, "s1k9", 0, 0, 6, 2000, 2000L - receipt.total,
+            "You spent ${money(receipt.total)} on ${receipt.count} items at Bayside Grocer. Your trip took 12 minutes.")), nop) },
+        "58-hardware-test" to { HardwareTestScreen(HwUi("connected SmartCart-TEST", "S|s1k9|ACTIVE|3|0|SmartCart-TEST", "s1k9 @ bayside-grocer", "s1k9", 0,
+            "SmartCart procedures available", "accepted", true, listOf("17:02:11 → START|s1k9|bayside-grocer", "17:02:11 ← OK|START|s1k9", "17:02:14 ← 1|A|apple|93",
+            "17:02:14 backend accepted for s1k9:1", "17:02:14 → ACK|s1k9|1", "17:02:20 ← 2|A|cell phone|71", "17:02:20 backend unknown_product for s1k9:2", "17:02:20 → ACK|s1k9|2")), nop, {}) },
+        "59-pair-check-cart" to { PairCheckScreen(Probe("A", "SmartCart-3F2A", connected = true, hello = "SmartCart-3F2A"), 2, {}, {}, {}) },
+        "60-cart-reconnecting" to { val s = cartShop().copy(bag = BagState.Connecting("SmartCart-3F2A", retry = true)); Host(app(s)) { MainTabs(app(s), nop) } },
+        "61-visit-summary" to { ShopScreen(ui(StoreState.Away("Bayside Grocer", 240)).copy(summary = TripSummary(receipt.copy(id = 0), "s1k9", 0, 0, 2, 0, 0,
+            "You left Bayside Grocer with nothing to pay for. Your trip took 4 minutes.")), nop) },
+        // ---- 3.3: notifications
+        "49-notifications" to { NotificationsScreen(app(ui(bay)).copy(perms = perms.copy(background = true), push = PushState(false, false, "")), nop, {}) },
+        "50-notifications-off" to { NotificationsScreen(app(ui(bay)).copy(notifSystem = false,
+            notif = NotifKind.values().associateWith { it != NotifKind.Store }), nop, {}) },
+        "51-notifications-server-push" to { NotificationsScreen(app(ui(bay)).copy(perms = perms.copy(background = true), pushBuild = true,
+            push = PushState(true, true, "trips,security")), nop, {}, previewResult = "Sent. It should arrive in a few seconds.") },
         "48-add-card-only-step" to { androidx.compose.runtime.CompositionLocalProvider(LocalSetupProgress provides (1 to 1)) { AddCardScreen(true, 3, null, {}, { _, _ -> }, {}) } },
         "47-trip-receipt" to { val u = app(ui(bay), trips = trips); Host(u) { MainTabs(u, nop, initialTab = 1, initialReview = trips[2]) } },
     )

@@ -24,7 +24,7 @@ import java.util.UUID
 sealed class BagState {
     object Off : BagState()
     object Searching : BagState()
-    data class Connecting(val name: String) : BagState()
+    data class Connecting(val name: String, val retry: Boolean = false) : BagState()
     data class Connected(val name: String) : BagState()
     data class Problem(val message: String) : BagState()
 }
@@ -34,11 +34,12 @@ data class FoundBag(val address: String, val bleName: String, val rssi: Int, val
 
 /** "Bag 3F2A" from "SmartBag-3F2A"; v1 bags all advertise SmartBag-01 and are just "Bag". */
 fun bagDisplayName(bleName: String): String {
+    if (CartProtocol.isCartName(bleName)) return "Cart " + bleName.removePrefix("SmartCart-").ifEmpty { "" }.trim()
     val suffix = bleName.removePrefix("SmartBag-").takeIf { bleName.startsWith("SmartBag-") }
     return if (suffix.isNullOrEmpty() || suffix == "01") "Bag" else "Bag $suffix"
 }
 
-/** Lines the bag sends that are about the bag itself (pairing hello), never items: "BAG <name> fw2". */
+/** Lines the bag sends that are about the bag itself (pairing hello), never items: "BAG <name> fw3". */
 fun isControlLine(line: String) = line.trim().startsWith("BAG ")
 
 /**
@@ -314,7 +315,7 @@ class BagLink(
         }
     }
 
-    /** Control lines ("BAG <name> fw2") are about the bag itself and never reach the shop as items. */
+    /** Control lines ("BAG <name> fw3") are about the bag itself and never reach the shop as items. */
     private fun deliver(line: String) { if (isControlLine(line)) onControl(line) else onLine(line) }
 
     private fun pump() {

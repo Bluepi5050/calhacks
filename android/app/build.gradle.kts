@@ -3,6 +3,11 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Server push (FCM) is optional: only a build with app/google-services.json (never committed) gets the fcm source
+// set, firebase-messaging and the google-services plugin. Without it the app builds and uses local notifications only.
+val hasFcm = file("google-services.json").exists()
+if (hasFcm) apply(plugin = "com.google.gms.google-services")
+
 // SpacetimeDB database the app talks to (override with -PstdbHost=... -PstdbDb=...)
 val stdbHost: String = (project.findProperty("stdbHost") as String?) ?: "https://maincloud.spacetimedb.com"
 val stdbDb: String = (project.findProperty("stdbDb") as String?) ?: "smartcart-5dt35"
@@ -14,10 +19,12 @@ android {
         applicationId = "space.mana.smartbag"
         minSdk = 26
         targetSdk = 34
-        versionCode = 5
-        versionName = "3.2"
+        versionCode = 10
+        versionName = "3.6"
         buildConfigField("String", "STDB_HOST", "\"$stdbHost\"")
         buildConfigField("String", "STDB_DB", "\"$stdbDb\"")
+        buildConfigField("boolean", "FCM", hasFcm.toString())
+        manifestPlaceholders["fcmEnabled"] = hasFcm.toString()
     }
     buildTypes {
         release {
@@ -25,6 +32,7 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+    sourceSets { getByName("main") { if (hasFcm) java.srcDir("src/fcm/java") } }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -57,6 +65,11 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.google.zxing:core:3.5.3")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.google.android.gms:play-services-location:21.3.0")
+    if (hasFcm) {
+        implementation(platform("com.google.firebase:firebase-bom:33.5.1"))
+        implementation("com.google.firebase:firebase-messaging")
+    }
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     // Screenshot tests: Robolectric native graphics + Roborazzi render real Compose pixels without an emulator.
