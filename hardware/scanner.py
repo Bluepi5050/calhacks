@@ -31,6 +31,13 @@ def open_capture(source):
             return capture
         capture.release()
 
+    # Linux: go straight to V4L2 for cameras; the default tries GStreamer first, which fails on /dev/video* paths.
+    if sys.platform.startswith("linux") and (isinstance(source, int) or str(source).startswith("/dev/video")):
+        capture = cv2.VideoCapture(source, cv2.CAP_V4L2)
+        if capture.isOpened():
+            return capture
+        capture.release()
+
     capture = cv2.VideoCapture(source)
     if not capture.isOpened():
         capture.release()
@@ -44,6 +51,10 @@ def open_capture(source):
 def configure_capture(capture, *, width=1280, height=720, fps=30, is_camera=True):
     """Request a camera mode, retain the device's working mode if unsupported."""
     if is_camera:
+        # Linux USB webcams default to uncompressed YUYV, which caps 1280x720 at about 10 FPS; MJPG reaches 30.
+        # Set it before the size: V4L2 picks the frame sizes and rates from the current pixel format.
+        if sys.platform.startswith("linux"):
+            capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         capture.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         capture.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
         capture.set(cv2.CAP_PROP_FPS, fps)
@@ -65,8 +76,12 @@ def configure_capture(capture, *, width=1280, height=720, fps=30, is_camera=True
     actual_fps = capture.get(cv2.CAP_PROP_FPS)
     fps_text = "unknown" if not actual_fps or actual_fps < 0 else "{:.2f}".format(actual_fps)
     if is_camera:
-        print("Camera mode: {}x{} at {} FPS (requested {}x{} at {} FPS).".format(
-            actual_width, actual_height, fps_text, width, height, fps), flush=True)
+        fourcc = int(capture.get(cv2.CAP_PROP_FOURCC) or 0)
+        pixel_format = "".join(chr((fourcc >> 8 * i) & 0xFF) for i in range(4)).strip()
+        print("Camera mode: {}x{} at {} FPS{} (requested {}x{} at {} FPS).".format(
+            actual_width, actual_height, fps_text,
+            " " + pixel_format if fourcc > 0 and pixel_format.isprintable() else "",
+            width, height, fps), flush=True)
     return actual_width, actual_height
 
 

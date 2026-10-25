@@ -103,7 +103,7 @@ On the Jetson, from `/home/scott170/calhacks`, compile the engine with the insta
 ```bash
 cd /home/scott170/calhacks
 /usr/src/tensorrt/bin/trtexec --onnx=hardware/models/yolov8n.onnx \
-  --saveEngine=hardware/models/yolov8n_fp16.engine --fp16 --shapes=images:1x3x640x640
+  --saveEngine=hardware/models/yolov8n_fp16.engine --fp16
 ```
 
 Then run the same crossing logic headless on the Logitech camera:
