@@ -288,6 +288,7 @@ class SmartCartBLE:
         self.gatt_registered = False
         self.advertising = False
         self._adv_attempt = 0
+        self._adv_retry = None                     # GLib source id of the one pending advertising retry
         self._adv_gen = 0
         self._bluez_owner = None
 
@@ -538,7 +539,23 @@ class SmartCartBLE:
             except dbus.exceptions.DBusException as exc:
                 log.warning("could not disconnect %s: %s", path, _explain(exc))
 
+    def _schedule_adv_retry(self, delay):
+        """At most one advertising retry is pending: a failed register and BlueZ's Release of the same
+        advertisement both ask for one, and each retry chain would otherwise fork on every failure."""
+        self._cancel_adv_retry()
+        self._adv_retry = GLib.timeout_add_seconds(delay, self._adv_retry_due)
+
+    def _cancel_adv_retry(self):
+        if self._adv_retry is not None:
+            GLib.source_remove(self._adv_retry)
+            self._adv_retry = None
+
+    def _adv_retry_due(self):
+        self._adv_retry = None
+        return self._register_adv()
+
     def _register_adv(self):
+        self._cancel_adv_retry()
         if self._stopping or self._bus is None:
             return False
         gen = self._adv_gen
@@ -553,6 +570,7 @@ class SmartCartBLE:
             return
         self.advertising = True
         self._adv_attempt = 0
+        self._cancel_adv_retry()
         log.info("advertising %s (service UUID%s)", self.name,
                  {0: " + local name", 1: " + adapter name", 2: " only"}[self._adv.variant])
 
@@ -572,12 +590,13 @@ class SmartCartBLE:
         delay = ADV_RETRY_S[min(self._adv_attempt, len(ADV_RETRY_S) - 1)]
         self._adv_attempt += 1
         log.error("advertising failed (%s); retrying in %d s", _explain(exc), delay)
-        GLib.timeout_add_seconds(delay, self._register_adv)
+        self._schedule_adv_retry(delay)
 
     def _on_adv_released(self):
         self.advertising = False
-        if not self._stopping:
-            GLib.timeout_add_seconds(ADV_RETRY_S[0], self._register_adv)
+        # BlueZ also releases an advertisement it failed to add; the error handler's backoff retry covers that.
+        if not self._stopping and self._adv_retry is None:
+            self._schedule_adv_retry(ADV_RETRY_S[0])
 
     def _readvertise(self, gen):
         """Some controllers stop advertising after a connection; refresh it once the cart is free."""
@@ -738,6 +757,7 @@ class SmartCartBLE:
 
     def _shutdown(self, done: threading.Event):
         self._stopping = True
+        self._cancel_adv_retry()
         with self._lock:
             if self._session:
                 self._session.stopping = True
