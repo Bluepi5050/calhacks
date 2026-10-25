@@ -23,10 +23,6 @@ def parse_args(argv=None):
     parser.add_argument("--imgsz", type=int, default=416,
                         help="YOLO inference input size (default: 416; use 640 for more detail)")
     parser.add_argument("--headless", action="store_true")
-    parser.add_argument("--http-port", type=int,
-                        help="serve the annotated camera in Chrome on this port")
-    parser.add_argument("--http-host", default="127.0.0.1",
-                        help="HTTP bind address (default: 127.0.0.1)")
     parser.add_argument("--device", help="Ultralytics inference device, e.g. cpu or 0")
     add_scanner_arguments(parser)
     args = parser.parse_args(argv)
@@ -34,8 +30,6 @@ def parse_args(argv=None):
         parser.error("--preview and --headless cannot be combined")
     if args.width <= 0 or args.height <= 0 or args.fps <= 0 or args.imgsz <= 0:
         parser.error("--width, --height, --fps, and --imgsz must be positive")
-    if args.http_port is not None and not 1 <= args.http_port <= 65535:
-        parser.error("--http-port must be between 1 and 65535")
     return finish_scanner_arguments(parser, args)
 
 
