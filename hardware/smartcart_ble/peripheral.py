@@ -44,6 +44,7 @@ ADVERTISEMENT = "org.bluez.LEAdvertisement1"
 TICK_S = 5
 ADV_RETRY_S = (5, 10, 20, 30)          # backoff while advertising keeps failing
 ADAPTER_RESET_MIN_S = 60                # at most one adapter power cycle per minute (advertising stuck)
+ADV_REPLY_TIMEOUT_S = 6                 # RegisterAdvertisement normally answers in ms; silence = the chip lost a reply
 READVERTISE_DELAY_MS = 1500
 DEFAULT_STATE_FILE = os.environ.get("SMARTCART_STATE_FILE") or os.path.expanduser(
     "~/.local/state/smartcart-ble/sessions.json")
@@ -603,7 +604,8 @@ class SmartCartBLE:
         mgr = dbus.Interface(self._bus.get_object(BLUEZ, self.adapter_path), ADV_MANAGER)
         mgr.RegisterAdvertisement(dbus.ObjectPath(self._adv.path), _NO_OPTIONS,
                                   reply_handler=lambda: self._on_adv_registered(gen),
-                                  error_handler=lambda e: self._on_adv_error(gen, e))
+                                  error_handler=lambda e: self._on_adv_error(gen, e),
+                                  timeout=ADV_REPLY_TIMEOUT_S)
         return False
 
     def _on_adv_registered(self, gen):
@@ -635,7 +637,9 @@ class SmartCartBLE:
             return
         # Second failure in a row with nothing connected: usually the kernel answers "Busy" (a scan or another
         # advertiser left the controller mid-operation). A power cycle clears it; at most once a minute.
-        if self._adv_attempt >= 1 and (self._last_adapter_reset is None
+        # No reply at all: the controller lost a command's answer and the kernel waits for it forever.
+        stuck = name == "org.freedesktop.DBus.Error.NoReply"
+        if (self._adv_attempt >= 1 or stuck) and (self._last_adapter_reset is None
                                        or self._clock() - self._last_adapter_reset >= ADAPTER_RESET_MIN_S):
             self._reset_adapter(exc)
             return

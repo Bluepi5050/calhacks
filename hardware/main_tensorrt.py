@@ -26,8 +26,7 @@ def main(argv=None):
     try:
         detector = TensorRTDetector(args.engine, confidence=args.confidence)
         if args.http_port is not None:
-            publisher = HttpPreview(args.http_host, args.http_port).start()
-            print("Browser preview: http://{}:{}/".format(args.http_host, args.http_port), flush=True)
+            publisher = HttpPreview(args.http_host, args.http_port).start()     # prints its address
         run_scanner(detector, args.source, products, args.geometry,
                     preview=args.preview, headless=not args.preview,
                     transport_mode=args.transport, frame_publisher=publisher,
