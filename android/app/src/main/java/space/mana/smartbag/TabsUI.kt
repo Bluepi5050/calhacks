@@ -1,5 +1,8 @@
 package space.mana.smartbag
 
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
@@ -50,9 +53,14 @@ data class AppUi(
     val pushBuild: Boolean = false,       // this APK includes FCM (built with google-services.json)
     val openReceipt: String? = null,      // a notification asked to open this receipt
     val geofencesOk: Boolean? = null,     // Android accepted the store geofences (null = not tried yet)
+    val hw: HwUi? = null,                 // hidden Hardware test screen
 )
 
-interface AppActions : ShopActions {
+interface AppActions : ShopActions, HwActions {
+    fun setBudget(cents: Int, done: (String?) -> Unit) {}
+    fun storeProducts(done: (List<Recommendation>?, String?) -> Unit) {}
+    fun relabel(from: String, to: String, done: (String?) -> Unit) {}
+    fun openHardware() {}
     fun signUp(name: String, email: String, password: String, done: (String?, AccountState?) -> Unit) {}
     fun signIn(email: String, password: String, done: (String?, AccountState?) -> Unit) {}
     fun signOut(done: (String?) -> Unit) {}
@@ -125,8 +133,17 @@ fun AppRoot(ui: AppUi, actions: AppActions, nav: Nav = rememberSaveable(saver = 
             override fun openPairing() { nav.overlay = "pair" }
             override fun openAddCard() { sheets.hide(); nav.overlay = "card" }
             override fun openNotifications() { nav.overlay = "notifications" }
-            override fun chooseCard() { sheets.show { CardPickerSheet(LocalAppUi.current!!.account, onPick = { c, done -> actions.setDefaultCard(c.id, done) },
-                onAdd = { sheets.hide(); nav.overlay = "card" }, onClose = sheets::hide) } }
+            override fun chooseCard() { sheets.show {
+                val u = LocalAppUi.current!!
+                CardPickerSheet(u.account, onPick = { c, done -> actions.setDefaultCard(c.id, done) },
+                    onAdd = { sheets.hide(); nav.overlay = "card" }, onClose = sheets::hide)
+                // The budget lives next to the card: both are about what leaving will cost.
+                ListRow("Budget", if (u.shop.budget > 0) money(u.shop.budget) + " per trip" else "None", icon = Glyph.receipt, chevron = true) { openBudget() }
+            } }
+            override fun openBudget() { sheets.show { BudgetSheet(LocalAppUi.current!!.shop.budget, onSave = actions::setBudget, onClose = sheets::hide) } }
+            override fun changeItem(line: Line) { sheets.show { ChangeItemSheet(line, load = actions::storeProducts,
+                onPick = { r, done -> actions.relabel(line.sku, r.sku, done) }, onClose = sheets::hide) } }
+            override fun openHardware() { nav.overlay = "hardware" }
         }
     }
     CompositionLocalProvider(LocalSheets provides sheets, LocalAppUi provides ui) {
@@ -136,6 +153,10 @@ fun AppRoot(ui: AppUi, actions: AppActions, nav: Nav = rememberSaveable(saver = 
                 nav.setup.isNotEmpty() && ui.shop.paid == null -> SetupStep(nav, ui, a)
                 !ui.perms.ready -> PermissionsScreen(ui.perms, onContinue = a::askPermissions, onSettings = a::appSettings)
                 nav.overlay == "pair" -> PairFlow(ui, a, setup = false) { nav.overlay = null }
+                nav.overlay == "hardware" && ui.hw != null -> {
+                    BackHandler { nav.overlay = null }
+                    HardwareTestScreen(ui.hw, a, onBack = { nav.overlay = null })
+                }
                 nav.overlay == "notifications" -> {
                     BackHandler { nav.overlay = null }
                     NotificationsScreen(ui, a, onBack = { nav.overlay = null })
@@ -395,6 +416,8 @@ fun AccountScreen(ui: AppUi, a: AppActions, bottomInset: Dp) {
             ListRow("Notifications", if (!ui.notifSystem) "Off in Android settings" else if (on == 0) "All off" else if (on == 4) "All on" else "$on of 4 on",
                 icon = Glyph.bell, chevron = true, subColor = if (!ui.notifSystem) p.bad else null, onClick = a::openNotifications)
             Hairline()
+            ListRow("Budget", if (ui.shop.budget > 0) money(ui.shop.budget) + " per trip" else "None set", icon = Glyph.receipt, chevron = true, onClick = a::openBudget)
+            Hairline()
             Spacer(Modifier.height(32.dp))
             Eyebrow("Permissions")
             Spacer(Modifier.height(8.dp))
@@ -415,7 +438,9 @@ fun AccountScreen(ui: AppUi, a: AppActions, bottomInset: Dp) {
             ListRow("Delete account", titleColor = p.bad, bold = false) { sheets.show { DeleteSheet(a, sheets::hide) } }
             Hairline()
             Spacer(Modifier.height(24.dp))
-            Txt("Bag It ${ui.version}", Type.caption, p.faint)
+            // Hidden: long-press the version for the Hardware test screen (SmartCart link, simulated cart).
+            Txt("Bag It ${ui.version}", Type.caption, p.faint, modifier = Modifier.pointerInput(Unit) {
+                detectTapGestures(onLongPress = { a.openHardware() }) })
             Spacer(Modifier.height(24.dp))
             Spacer(Modifier.height(bottomInset))
         }

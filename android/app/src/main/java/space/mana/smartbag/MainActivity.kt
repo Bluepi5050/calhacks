@@ -41,7 +41,7 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 33) permissions() + Manifest.permission.POST_NOTIFICATIONS else permissions()
     // Declined or not: connect() either connects or reports "Turn on Bluetooth…", so the bag never sits in Off.
     private val bluetoothAsk = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        if (model.pairing != null) model.startPairing() else model.link.connect()
+        if (model.pairing != null) model.startPairing() else model.connectAll()
     }
 
     private fun permissions(): Array<String> =
@@ -77,10 +77,10 @@ class MainActivity : ComponentActivity() {
 
     private fun connectBag() {
         if (model.pairing != null) return            // the pairing screen owns Bluetooth right now
-        if (!model.link.hasBluetooth) { model.link.connect(); return }
+        if (!model.link.hasBluetooth) { model.connectAll(); return }
         if (!model.link.isEnabled) {
-            try { bluetoothAsk.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)) } catch (_: Exception) { model.link.connect() }
-        } else model.link.connect()
+            try { bluetoothAsk.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)) } catch (_: Exception) { model.connectAll() }
+        } else model.connectAll()
     }
 
     private fun appSettings() {
@@ -131,6 +131,16 @@ class MainActivity : ComponentActivity() {
         override fun setNotif(k: NotifKind, on: Boolean) = model.setNotif(k, on)
         override fun sendTest(done: (String) -> Unit) = model.sendTest(done)
         override fun consumeOpenReceipt() { model.openReceipt = null }
+        override fun setQty(sku: String, qty: Int) { model.setQty(sku, qty) }
+        override fun dismissVisit() = model.dismissVisit()
+        override fun setBudget(cents: Int, done: (String?) -> Unit) { model.setBudget(cents, done) }
+        override fun storeProducts(done: (List<Recommendation>?, String?) -> Unit) { model.storeProducts(done) }
+        override fun relabel(from: String, to: String, done: (String?) -> Unit) { model.relabel(from, to, done) }
+        override fun simulateCart(on: Boolean) = model.simulateCart(on)
+        override fun hwStart() { model.session?.let { s -> model.hwWrite(CartProtocol.start(s.sessionId, s.storeId)) } ?: model.hwWrite("START|t${System.currentTimeMillis() % 100000}|test") }
+        override fun hwStop() { (model.cartSync.confirmed ?: model.cartSync.cart?.sid)?.let { model.hwWrite(CartProtocol.stop(it)) } }
+        override fun hwSync() = model.hwSync()
+        override fun simulate(action: String, label: String) = model.simulate(action, label)
         override fun allowNotifications() {
             // Android 13+: ask once in-app; after a denial (or below 13) only the app's notification settings can help.
             if (Build.VERSION.SDK_INT >= 33 && !has(Manifest.permission.POST_NOTIFICATIONS) && !prefs.getBoolean("asked_notifications", false)) {
@@ -196,7 +206,9 @@ class MainActivity : ComponentActivity() {
 fun ShopModel.ui(): ShopUi {
     val a = account?.takeIf { it.signedIn }
     return ShopUi(bag, store, payment, total, count, lines.toList(), paid, flash, syncError, lastTrip,
-        noBag = a != null && a.bags.isEmpty(), noCard = a != null && a.cards.isEmpty())
+        noBag = a != null && a.bags.isEmpty(), noCard = a != null && a.cards.isEmpty(),
+        budget = budgetCents, recs = recs?.items.orEmpty().take(3), summary = summary,
+        editable = hwBackend == true && store is StoreState.InStore)
 }
 
 fun ShopModel.appUi(perms: Perms, notifSystem: Boolean = true) = AppUi(
@@ -206,4 +218,11 @@ fun ShopModel.appUi(perms: Perms, notifSystem: Boolean = true) = AppUi(
     demoActive = demoStandIn,
     notif = notifVersion.let { notifPrefs.all() }, notifSystem = notifSystem, push = push, pushBuild = BuildConfig.FCM || PushHooks.available,
     openReceipt = openReceipt, geofencesOk = geofencesOk,
+    hw = HwUi(
+        bag = when (val b = bag) { is BagState.Connected -> "connected ${b.name}"; is BagState.Connecting -> (if (b.retry) "reconnecting " else "connecting ") + b.name
+            is BagState.Problem -> b.message; BagState.Searching -> "searching"; BagState.Off -> "off" },
+        status = cartStatus, session = session?.let { "${it.sessionId} @ ${it.storeId}" + if (it.active) "" else " (ended)" },
+        confirmed = cartSync.confirmed, queued = cartSync.pending.size,
+        backend = when (hwBackend) { true -> "SmartCart procedures available"; false -> "not deployed yet"; null -> null },
+        last = lastHw?.let { it.status + if (it.message.isNotEmpty()) ": " + it.message else "" }, simulated = simulated, log = cartLog.toList()),
 )

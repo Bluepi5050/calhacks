@@ -85,10 +85,63 @@ class ShopModel(private val app: Application) {
     val link: BagLink
     val location: PhoneLocation
 
+    // ---------------------------------------------------------------- SmartCart (Jetson) state
+    lateinit var cart: CartLink; private set
+    val cartSync: CartSync
+    private var cartBag: BagState = BagState.Off
+    /** The hidden Hardware test screen's log (newest last). */
+    val cartLog = mutableStateListOf<String>()
+    var cartStatus by mutableStateOf<String?>(null); private set
+    /** Backend session for this trip (contract §4); null when not in a store or the backend has no sessions. */
+    var session by mutableStateOf<SessionState?>(null); private set
+    var budgetCents by mutableStateOf(prefs.getInt("budget_cents", 0)); private set
+    var recs by mutableStateOf<Recommendations?>(null); private set
+    var summary by mutableStateOf<TripSummary?>(null); private set
+    /** null = unknown, false = this database doesn't have the SmartCart procedures yet. */
+    var hwBackend by mutableStateOf<Boolean?>(null); private set
+    var lastHw by mutableStateOf<HwOutcome?>(null); private set
+    var simulated by mutableStateOf(false); private set
+    private var mock: MockCart? = null
+    private var sessionAsked: String? = null
+    private var recsGen = 0
+    private var pumpRetry = 0
+    private var rekeying = false
+
     init {
         Api.init(app)
         link = BagLink(app, ::onLine, { s -> onBag(s) }, ::onControl)
         location = PhoneLocation(app) { onFix(it) }
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
+        cartSync = CartSync(
+            write = { m -> if (simulated) mock?.control(m) else cart.write(m) },
+            forward = { e -> val r = Api.hwEvent(e.sid, e.seq, e.action, e.label, e.confidence); onHw(r, e); HwOutcome(r.status, r.message) },
+            store = object : QueueStore {
+                override fun load() = prefs.getString("cart_queue", null)
+                override fun save(json: String) { prefs.edit().putString("cart_queue", json).apply() }
+            },
+            log = ::clog,
+        )
+        cart = CartLink(app,
+            onState = { s -> if (!simulated) { cartBag = s; onCartState(s) } },
+            // A cart being checked during pairing (maybe not ours) never gets the protocol: no START to a stranger's cart.
+            onReady = { if (!simulated && pairing == null && cart.name in cart.allowed) cartSync.onConnected() },
+            onStatus = { t -> if (!simulated) cartStatusIn(t) },
+            onEvent = { t -> if (!simulated) cartEventIn(t) },
+            onDown = { if (!simulated) cartSync.onDisconnected() },
+            log = ::clog)
+        if (cartSync.pending.isNotEmpty()) main.post { pumpCart() }       // events left from before a restart
+        scope.launch { while (true) { delay(5_000); cartSync.watchdog() } }
+        cartSync.onLost = lost@{ sid ->
+            val s = session
+            if (!CartRules.REKEY_LOST_SESSION || s == null || s.sessionId != sid || s.lastSeq == 0L || rekeying) return@lost false
+            rekeying = true
+            ops.trySend {
+                try { val n = Api.sessionRekey(); session = n; cartSync.setSession(n.sessionId.takeIf { n.active }, n.storeId) }
+                catch (_: Exception) { cartSync.setSession(null, null); sessionAsked = null }
+                finally { rekeying = false }
+            }
+            true
+        }
         scope.launch {
             for (op in ops) {
                 try { op(); syncError = null } catch (e: Exception) {
@@ -176,7 +229,7 @@ class ShopModel(private val app: Application) {
     /** Receipts at or below this id belong to whoever used this phone before the current sign-in: hide them. */
     private var tripFloor = prefs.getLong("trip_floor", 0L)
     /** True while the demo bag stands in for a real one (no Bluetooth bag connected). */
-    val demoStandIn: Boolean get() = linkBag !is BagState.Connected && demoOnly
+    val demoStandIn: Boolean get() = physical !is BagState.Connected && demoOnly
 
     private fun loadCachedAccount(): AccountState? = try {
         prefs.getString("account_v5", null)?.let { Api.decodeAccount(java.util.Base64.getDecoder().decode(it)) }?.takeIf { it.signedIn }
@@ -209,6 +262,10 @@ class ShopModel(private val app: Application) {
         pairing = null
         link.allowed = emptySet()
         link.disconnect()
+        cartSync.setSession(null, null)      // STOP on the cart (if connected) before letting go of it
+        cart.allowed = emptySet()
+        cart.disconnectSoon()               // let the STOP go out first
+        session = null; recs = null; summary = null; sessionAsked = null
         location.stop()
         WatchService.stop(app)
         Geofences.clear(app)                 // a signed-out phone isn't woken by stores
@@ -248,7 +305,12 @@ class ShopModel(private val app: Application) {
 
     /** Auto-connect only to the account's bags (any bag if none, or only the demo bag, is paired). */
     private fun applyBags(a: AccountState?) {
-        val real = a?.bags.orEmpty().filter { !it.isDemo }.map { it.bagId }.toSet()
+        val all = a?.bags.orEmpty().filter { !it.isDemo }.map { it.bagId }
+        val carts = all.filter(CartProtocol::isCartName).toSet()
+        val real = all.filter { !CartProtocol.isCartName(it) }.toSet()
+        val cartsBefore = cart.allowed
+        cart.allowed = carts
+        if (carts.isEmpty() && cartsBefore.isNotEmpty()) { cartSync.setSession(null, null); cart.disconnectSoon() }
         val before = link.allowed
         link.allowed = real
         val cur = link.currentName
@@ -262,10 +324,27 @@ class ShopModel(private val app: Application) {
     }
 
     private val demoOnly get() = account?.signedIn == true && account!!.bags.isNotEmpty() && account!!.bags.all { it.isDemo }
+    private val hasCarts get() = cart.allowed.isNotEmpty()
+    private val hasNusBags get() = link.allowed.isNotEmpty()
+
+    /** Connect what the account has: its carts (SmartCart service) and/or bags (NUS; any bag when none is paired). */
+    fun connectAll() {
+        if (hasCarts) cart.connect()
+        if (hasNusBags || !hasCarts) link.connect()
+    }
+
+    /** The bag the shopper sees: a connected cart or bag wins; otherwise the device the account actually has. */
+    private val physical: BagState get() = when {
+        simulated -> BagState.Connected(mock?.device ?: "SmartCart-TEST")
+        cartBag is BagState.Connected -> cartBag
+        linkBag is BagState.Connected -> linkBag
+        hasCarts && !hasNusBags -> cartBag
+        else -> linkBag
+    }
 
     private var sentBag: String? = null
     private fun updateBag() {
-        val now = if (linkBag !is BagState.Connected && demoOnly) BagState.Connected("Demo bag") else linkBag
+        val now = if (physical !is BagState.Connected && demoOnly) BagState.Connected("Demo bag") else physical
         val was = bag
         bag = now
         // Bag alert: disconnected for 20 s in a store with items, and Bag It not on screen. Reconnecting clears it.
@@ -286,17 +365,18 @@ class ShopModel(private val app: Application) {
 
     fun startPairing() {
         pairing = PairUi("scanning", emptyList(), System.currentTimeMillis())
-        val err = link.scanForPairing({ list ->
-            val p = pairing ?: return@scanForPairing
-            if (p.probe == null) pairing = p.copy(scan = "scanning", found = list)
-        }, { failed -> pairing = pairing?.copy(scan = failed) })
+        // Bags (NUS) and carts (SmartCart service) show up in the same "Bags nearby" list; carts read "Cart XXXX".
+        var nus = emptyList<FoundBag>(); var carts = emptyList<FoundBag>()
+        fun merge() { val p = pairing ?: return; if (p.probe == null) pairing = p.copy(scan = "scanning", found = nus + carts) }
+        val err = link.scanForPairing({ list -> nus = list; merge() }, { failed -> pairing = pairing?.copy(scan = failed) })
         if (err != null) pairing = pairing?.copy(scan = err)
+        else cart.scanForPairing { list -> carts = list; merge() }
     }
 
     /** Tap a bag in the list: connect, then ask it to blink (HELLO) every few seconds while the shopper checks. */
     fun probe(b: FoundBag) {
         pairing = (pairing ?: PairUi("scanning", emptyList(), System.currentTimeMillis())).copy(probe = Probe(b.address, b.bleName))
-        link.connectTo(b.address, b.bleName)
+        if (CartProtocol.isCartName(b.bleName)) cart.connectTo(b.address, b.bleName) else link.connectTo(b.address, b.bleName)
         scope.launch {
             delay(12_000)
             val p = pairing?.probe
@@ -307,7 +387,7 @@ class ShopModel(private val app: Application) {
 
     private fun hello() {
         val p = pairing?.probe ?: return
-        if (!p.connected) return
+        if (!p.connected || CartProtocol.isCartName(p.bleName)) return          // carts have no light: STATUS names them
         link.send("HELLO")
         pairing = pairing?.copy(probe = p.copy(helloCount = p.helloCount + 1))
         val n = p.helloCount + 1
@@ -335,10 +415,12 @@ class ShopModel(private val app: Application) {
     /** Leave the pairing flow: stop listing bags and go back to connecting the account's bags. */
     fun endPairing() {
         // Keep the connection only if it is the bag just paired; otherwise go back to auto-connecting.
-        val keep = pairing?.probe?.takeIf { it.connected && it.bleName in link.allowed && linkBag is BagState.Connected }
+        val keep = pairing?.probe?.takeIf { it.connected && (it.bleName in link.allowed || it.bleName in cart.allowed) && physical is BagState.Connected }
         pairing = null
-        link.stopPairScan()
-        if (keep == null) link.connect()
+        link.stopPairScan(); cart.stopPairScan()
+        if (keep == null) connectAll()
+        // Kept the cart just paired: now it's ours, so start the protocol (STATUS read → reconcile → START if in a store).
+        else if (CartProtocol.isCartName(keep.bleName) && cart.ready) { cartSync.onConnected(); cart.readStatus() }
         updateBag()
     }
 
@@ -358,6 +440,10 @@ class ShopModel(private val app: Application) {
         val seen = prefs.getLong("seen_order", -1L)
         if (r != null && seen >= 0 && r.id > seen) {           // the database just charged a walk-out
             paid = r
+            // The trip is over: STOP the cart now (later detections can't change it) and fetch the trip summary.
+            cartSync.setSession(null, null); session = null; recs = null; sessionAsked = null
+            summary = null
+            if (hwBackend != false) ops.trySend { summary = try { Api.summary(r.id) } catch (_: Exception) { null } }
             // The bag's light says "paid" only when it really was; a payment-due trip leaves it dark.
             if (r.status == "paid") link.send("PAID ${r.code}")
             // In the foreground the receipt is on screen; still claim the code so a server push can't repeat it.
@@ -366,6 +452,7 @@ class ShopModel(private val app: Application) {
         }
         if (r != null && r.id > seen || seen < 0) prefs.edit().putLong("seen_order", r?.id ?: 0L).apply()
         if (serviceRunning || !watching) Notify.status(app, statusLine())
+        if (account?.signedIn == true || hasCarts) sessionFor((store as? StoreState.InStore)?.id)
         // Store arrival: once per visit, only when Bag It isn't on screen.
         val (v, arrive) = NotifyRules.arrival(visit, store, foreground)
         if (v != visit && v == null) Notify.cancelArrival(app)
@@ -416,6 +503,8 @@ class ShopModel(private val app: Application) {
         locating = true
         sentAt = l; sentTime = System.currentTimeMillis()
         ops.trySend {
+            // Items the cart reported must reach the bag before a fix that could walk out (else they'd go uncharged).
+            if (cartSync.pending.isNotEmpty()) cartSync.pump()
             try { apply(Api.locate(l.latitude, l.longitude, l.accuracy), true) } finally { locating = false }
         }
     }
@@ -460,5 +549,178 @@ class ShopModel(private val app: Application) {
         ops.trySend { apply(Api.locate(lat + 0.0002, l.longitude, 8f), true) }
     }
 
+
+    // ---------------------------------------------------------------- SmartCart: link events, sessions, corrections
+
+    private fun clog(m: String) {
+        val t = java.text.SimpleDateFormat("HH:mm:ss", Locale.US).format(java.util.Date())
+        cartLog.add("$t $m")
+        while (cartLog.size > 200) cartLog.removeAt(0)
+    }
+
+    private fun onCartState(s: BagState) {
+        val p = pairing?.probe
+        if (p != null && CartProtocol.isCartName(p.bleName)) when {
+            s is BagState.Connected && !p.connected -> pairing = pairing?.copy(probe = p.copy(connected = true))
+            s is BagState.Problem -> pairing = pairing?.copy(probe = p.copy(error = s.message, connected = false))
+        }
+        updateBag()
+    }
+
+    private fun cartStatusIn(t: String) {
+        cartStatus = t
+        // Pairing: the cart has no light to blink, so its STATUS (device name) confirms which cart this phone reached.
+        (CartProtocol.status(t) as? CartProtocol.Status.State)?.let { st ->
+            // The real name from STATUS replaces a name guessed from the address; pairing saves this one.
+            pairing?.probe?.takeIf { CartProtocol.isCartName(it.bleName) }?.let { pairing = pairing?.copy(probe = it.copy(hello = st.device,
+                bleName = if (CartProtocol.isCartName(st.device)) st.device else it.bleName)) }
+        }
+        val st = CartProtocol.status(t) as? CartProtocol.Status.State
+        if (pairing?.probe == null) {
+            // Connected by a guessed name (nameless advertisement): STATUS says which cart this really is.
+            if (st != null && !simulated && cart.allowed.isNotEmpty() && st.device !in cart.allowed) { cartSync.onDisconnected(); cart.reject(); return }
+            cartSync.onStatus(t)
+        }
+    }
+
+    private fun cartEventIn(t: String) {
+        if (pairing != null || account?.signedIn != true) { clog("← $t (ignored: not shopping)"); return }
+        val r = cartSync.onEvent(t)
+        if (r == "queued") pumpCart()
+    }
+
+    /** Forward queued cart events in order (one backend call at a time, inside the shared queue); back off if offline. */
+    private var pumpJob: kotlinx.coroutines.Job? = null
+    fun pumpCart() {
+        ops.trySend {
+            if (cartSync.pump()) { pumpRetry = 0; pumpJob?.cancel(); pumpJob = null }
+            else if (pumpJob?.isActive != true) {                 // one retry loop, however many events arrive offline
+                val d = minOf(30_000L, 2000L shl minOf(pumpRetry++, 4))
+                pumpJob = scope.launch { delay(d); pumpJob = null; pumpCart() }
+            }
+        }
+    }
+
+    /** The backend answered a cart event: show its cart (the same CartState as every other call). */
+    private fun onHw(r: HwEventResult, e: QueuedEvent) {
+        lastHw = HwOutcome(r.status, r.message)
+        if (r.state.sessionId.isNotEmpty()) session = r.state
+        noteBudget(r.state)
+        apply(r.state.cart, false)
+        if (r.status == "accepted" && e.action == "A") {
+            val l = lines.maxByOrNull { it.addedMicros }
+            if (l != null && l.sold) { val n = ++flashN; flash = l.sku to n; scope.launch { delay(1600); if (flash?.second == n) flash = null } }
+        }
+        scheduleRecs()
+        // The backend says this session is over or not ours while we think we're shopping: find the current one.
+        if ((r.status == "stale_session" || r.status == "no_session") && e.sid == cartSync.desired?.first) {
+            val id = (store as? StoreState.InStore)?.id
+            if (id != null) { session = null; sessionAsked = null; cartSync.setSession(null, null); sessionFor(id) }
+        }
+    }
+
+    private fun noteBudget(s: SessionState) {
+        if (s.budgetCents != budgetCents) { budgetCents = s.budgetCents; prefs.edit().putInt("budget_cents", budgetCents).apply() }
+    }
+
+    /** Called from apply(): open/refresh the backend session when we enter a store; end it when we leave. */
+    private fun sessionFor(storeId: String?) {
+        if (storeId == null) {
+            if (session != null || cartSync.desired != null) {
+                val wasActive = session?.active == true
+                session = null; recs = null; cartSync.setSession(null, null)
+                // Left with nothing to pay for (no receipt): the summary still tells how the visit went.
+                if (wasActive && hwBackend == true) ops.trySend { val su = try { Api.summary(0) } catch (_: Exception) { null }; if (su != null && su.receipt.id == 0L) summary = su }
+            }
+            sessionAsked = null
+            return
+        }
+        val s = session
+        if (hwBackend == false || (s != null && s.storeId == storeId && s.active) || sessionAsked == storeId) return
+        sessionAsked = storeId
+        ops.trySend { refreshSession() }
+    }
+
+    private suspend fun refreshSession() {
+        try {
+            val s = Api.sessionState()
+            hwBackend = true
+            noteBudget(s)
+            if (s.active && s.sessionId.isNotEmpty()) { session = s; cartSync.setSession(s.sessionId, s.storeId); scheduleRecs() }
+            else { session = null; cartSync.setSession(null, null) }
+        } catch (e: ApiException) {
+            // Not deployed yet (unknown procedure): shopping works as before, without a cart session.
+            if (e.message.orEmpty().contains("No such procedure", true)) hwBackend = false
+            sessionAsked = null
+        } catch (_: Exception) { sessionAsked = null }                    // offline: ask again on the next fix
+    }
+
+    /** Up to three quiet suggestions, refreshed 1.5 s after the bag settles. */
+    private fun scheduleRecs() {
+        if (session?.active != true) return
+        val n = ++recsGen
+        scope.launch {
+            delay(1500)
+            if (n != recsGen || session?.active != true) return@launch
+            ops.trySend { recs = try { Api.recommend() } catch (_: Exception) { recs } }
+        }
+    }
+
+    /** Budget for this and later trips (0 clears). [done] gets null or the server's message. */
+    fun setBudget(cents: Int, done: (String?) -> Unit) = ops.trySend {
+        try { val s = Api.setBudget(cents); noteBudget(s); if (s.active) session = s; done(null); scheduleRecs() }
+        catch (e: Exception) { done(friendly(e)) }
+    }
+
+    /** Manual correction: set a line's quantity (0 removes it). */
+    fun setQty(sku: String, qty: Int) = ops.trySend {
+        try { val s = Api.setQty(sku, qty); if (s.active) session = s; apply(s.cart, false); scheduleRecs() }
+        catch (e: Exception) { syncError = friendly(e) }
+    }
+
+    /** "Change item": the cart saw the wrong thing; move one unit to the right product. */
+    fun relabel(from: String, to: String, done: (String?) -> Unit = {}) = ops.trySend {
+        try { val s = Api.relabel(from, to); if (s.active) session = s; apply(s.cart, false); done(null); scheduleRecs() }
+        catch (e: Exception) { done(friendly(e)) }
+    }
+
+    fun storeProducts(done: (List<Recommendation>?, String?) -> Unit) = ops.trySend {
+        try { done(Api.storeProducts(), null) } catch (e: Exception) { done(null, friendly(e)) }
+    }
+
+    // ---- hidden Hardware test screen
+
+    fun hwWrite(msg: String) { clog("test → $msg"); if (simulated) mock?.control(msg) else cart.write(msg) }
+    fun hwSync() = cartSync.sync()
+
+    /** Simulated cart: the same CartSync path as a real cart, with [MockCart] answering like the Jetson. */
+    fun simulateCart(on: Boolean) {
+        if (on == simulated) return
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
+        if (on) {
+            cartSync.setSession(null, null)               // STOP the real cart's session before handing the protocol over
+            cartSync.onDisconnected()
+            cart.disconnectSoon()
+            simulated = true
+            mock = MockCart("SmartCart-TEST", { t -> cartStatus = t; cartSync.onStatus(t) }, { t -> cartEventIn(t) }, { f -> main.post(f) })
+            clog("simulated cart on")
+            cartSync.onConnected()
+            session?.takeIf { it.active }?.let { cartSync.setSession(it.sessionId, it.storeId) }   // in a store: START the simulated cart
+            mock?.let { m -> main.post { cartStatus = m.status(); cartSync.onStatus(m.status()) } }
+        } else {
+            cartSync.onDisconnected(); simulated = false; mock = null; clog("simulated cart off")
+            sessionAsked = null; session = null                 // ask again so the real cart gets START
+            cartBag = BagState.Off; connectAll()
+        }
+        updateBag()
+    }
+
+    /** Simulated crossing (A/R + COCO label), as the Jetson scanner would report it. */
+    fun simulate(action: String, label: String) {
+        val m = mock ?: return
+        if (!m.crossing(action, label)) clog("simulated $action $label not sent: cart has no ACTIVE session")
+    }
+
     fun finishReceipt() { paid = null }
+    fun dismissVisit() { if (summary?.receipt?.id == 0L) summary = null }
 }

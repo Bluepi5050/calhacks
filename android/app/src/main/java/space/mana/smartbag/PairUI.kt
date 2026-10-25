@@ -123,19 +123,22 @@ fun PairCheckScreen(probe: Probe, step: Int?, onYes: () -> Unit, onNo: () -> Uni
                     ScreenTitle("Connecting to $name")
                     Spacer(Modifier.height(16.dp)); BusyLine("Connecting…")
                 }
+                CartProtocol.isCartName(probe.bleName) -> ScreenTitle("Is this your cart?",
+                    // Carts have no light to blink: the name the cart reports over Bluetooth (STATUS) confirms which one this is.
+                    probe.hello?.let { "This phone reached $name. It calls itself $it: check the label on your cart." } ?: "Reading $name's name…")
                 else -> ScreenTitle("Is the light on your bag blinking?",
                     "$name should be blinking now, three times in a row." + if (probe.hello == null && probe.helloCount > 2) " Older bags don't blink: if it's the one in your hand, it's yours." else "")
             }
             Spacer(Modifier.height(48.dp))
             Box(Modifier.fillMaxWidth().semantics { contentDescription = "Your bag's light" }, contentAlignment = Alignment.Center) {
-                BlinkingMark(if (probe.connected && probe.error == null) maxOf(probe.helloCount, 1) else 0, steady = false)
+                BlinkingMark(if (probe.connected && probe.error == null && !CartProtocol.isCartName(probe.bleName)) maxOf(probe.helloCount, 1) else 0, steady = false)
             }
             Spacer(Modifier.height(24.dp))
         }
         BottomArea {
             if (probe.error != null) Pill("Try another", Modifier.fillMaxWidth(), onClick = onNo)
             else {
-                if (probe.connected) { Pill("Yes, that's my bag", Modifier.fillMaxWidth(), onClick = onYes); Spacer(Modifier.height(8.dp)) }
+                if (probe.connected) { Pill(if (CartProtocol.isCartName(probe.bleName)) "Yes, that's my cart" else "Yes, that's my bag", Modifier.fillMaxWidth(), onClick = onYes); Spacer(Modifier.height(8.dp)) }
                 Pill(if (probe.connected) "No, try another" else "Try another bag", Modifier.fillMaxWidth(), primary = false, onClick = onNo)
             }
         }
@@ -154,7 +157,8 @@ fun PairNameScreen(bleName: String, initial: String, step: Int?, onPair: (String
         if (step != null) { Spacer(Modifier.statusBarsPadding()); StepBar(step); Spacer(Modifier.height(8.dp)) } else TopBar(if (busy) null else onBack)
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp)) {
             Spacer(Modifier.height(if (step != null) 16.dp else 8.dp))
-            ScreenTitle("Name your bag", "So you can tell your bags apart. You can change it later.")
+            val cartNaming = CartProtocol.isCartName(bleName)
+            ScreenTitle(if (cartNaming) "Name your cart" else "Name your bag", "So you can tell them apart. You can change it later.")
             Spacer(Modifier.height(32.dp))
             Field("Name", name, { name = it.take(30) }, enabled = !busy, hint = bagDisplayName(bleName),
                 capitalization = KeyboardCapitalization.Sentences, ime = ImeAction.Done, onIme = { go() })
@@ -162,7 +166,7 @@ fun PairNameScreen(bleName: String, initial: String, step: Int?, onPair: (String
         }
         BottomArea {
             ErrorLine(err)
-            BusyPill("Pair bag", busy) { go() }
+            BusyPill(if (CartProtocol.isCartName(bleName)) "Pair cart" else "Pair bag", busy) { go() }
         }
     }
 }
