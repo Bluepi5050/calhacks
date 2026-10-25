@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import logging
 import sys
 import threading
 import time
@@ -44,9 +45,27 @@ def open_capture(source):
 def configure_capture(capture, *, width=1280, height=720, fps=30, is_camera=True):
     """Request a camera mode, retain the device's working mode if unsupported."""
     if is_camera:
-        capture.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        capture.set(cv2.CAP_PROP_FPS, fps)
+        current_width = int(round(capture.get(cv2.CAP_PROP_FRAME_WIDTH)))
+        current_height = int(round(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+        current_fps = capture.get(cv2.CAP_PROP_FPS)
+        keep_native_mode = (
+            sys.platform == "win32" and current_width == width
+            and current_height == height and fps == 30
+            and (current_fps <= 0 or abs(current_fps - fps) < 0.5)
+        )
+        if keep_native_mode:
+            print("Keeping the webcam's native capture mode; measured CAM FPS "
+                  "appears in the preview.", flush=True)
+        else:
+            if sys.platform == "win32":
+                # Compressed USB frames can help modes that exceed the native bandwidth.
+                try:
+                    capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+                except cv2.error:
+                    pass
+            capture.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            capture.set(cv2.CAP_PROP_FPS, fps)
 
         if sys.platform == "win32":
             try:
@@ -63,10 +82,21 @@ def configure_capture(capture, *, width=1280, height=720, fps=30, is_camera=True
     actual_width = int(round(capture.get(cv2.CAP_PROP_FRAME_WIDTH)))
     actual_height = int(round(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
     actual_fps = capture.get(cv2.CAP_PROP_FPS)
+    try:
+        fourcc = int(capture.get(cv2.CAP_PROP_FOURCC))
+    except (ValueError, OverflowError):
+        fourcc = 0
+    codec = "".join(chr((fourcc >> (8 * i)) & 255) for i in range(4)).strip("\x00")
+    try:
+        backend = capture.getBackendName()
+    except (cv2.error, AttributeError):
+        backend = "unknown"
     fps_text = "unknown" if not actual_fps or actual_fps < 0 else "{:.2f}".format(actual_fps)
     if is_camera:
-        print("Camera mode: {}x{} at {} FPS (requested {}x{} at {} FPS).".format(
-            actual_width, actual_height, fps_text, width, height, fps), flush=True)
+        print("Camera mode: {}x{} at {} FPS, codec {}, backend {} "
+              "(requested {}x{} at {} FPS).".format(
+            actual_width, actual_height, fps_text, codec or "unknown", backend,
+            width, height, fps), flush=True)
     return actual_width, actual_height
 
 
@@ -84,11 +114,26 @@ def make_transport(mode="both"):
     return CompositeTransport(JsonLineTransport(), receiver), receiver
 
 
-def connect_session_hooks(transport, event_processor):
-    """BLE: a new shopping session resets the local bag counts. No-op for other transports."""
+def connect_session_hooks(transport, event_processor, on_session_change=None):
+    """Queue scanner state resets on BLE START/STOP without blocking its reader."""
     register = getattr(transport, "add_session_start_listener", None)
     if callable(register):
-        register(event_processor.reset_counts)
+        register(on_session_change or event_processor.reset_counts)
+    if on_session_change is not None:
+        cart = getattr(transport, "cart", None)
+        register_stop = getattr(cart, "add_session_stop_listener", None)
+        if callable(register_stop):
+            register_stop(lambda _sid, _reason: on_session_change())
+
+
+def enable_tracking_debug():
+    logger = logging.getLogger("smartcart.tracking")
+    if not logger.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter("tracking %(message)s"))
+        logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
 
 
 def close_transport(transport):
@@ -151,7 +196,8 @@ def _draw(frame, tracks, geometry, crossing_detector, status, counts, fps,
 
 def _run_live_camera_preview(capture, detector, tracker, crossing_detector,
                              event_processor, geometry, products, requested_fps,
-                             frame_width, frame_height):
+                             frame_width, frame_height, frame_publisher=None,
+                             show_window=True, session_reset_pending=None):
     """Keep camera display smooth while inference consumes the newest frame."""
     lock = threading.Lock()
     stop = threading.Event()
@@ -205,19 +251,33 @@ def _run_live_camera_preview(capture, detector, tracker, crossing_detector,
                 detections = [d for d in detector.detect(frame)
                               if d.class_name in products]
                 now = time.perf_counter()
+                current_height, current_width = frame.shape[:2]
                 with lock:
+                    if session_reset_pending is not None and session_reset_pending.is_set():
+                        session_reset_pending.clear()
+                        tracker.reset()
+                        crossing_detector.reset()
+                        event_processor.reset_counts()
                     tracks = tracker.update(
-                        detections, frame_width, frame_height, timestamp=now
+                        detections, current_width, current_height, timestamp=now
                     )
                     relevant = [track for track in tracks if geometry.in_scan_region(
-                        (track.centroid[0] / frame_width,
-                         track.centroid[1] / frame_height)
+                        (track.centroid[0] / current_width,
+                         track.centroid[1] / current_height)
                     )]
                     crossing = crossing_detector.update(
                         tracks, expired_track_ids=tracker.expired_track_ids,
                         ambiguous=len(relevant) > 1,
                     )
                     status = crossing_detector.last_status
+                    if session_reset_pending is not None and session_reset_pending.is_set():
+                        session_reset_pending.clear()
+                        tracker.reset()
+                        crossing_detector.reset()
+                        event_processor.reset_counts()
+                        crossing = None
+                        tracks = []
+                        status = event_processor.last_status
                     if crossing is not None:
                         event_processor.process(crossing)
                         status = event_processor.last_status
@@ -237,34 +297,42 @@ def _run_live_camera_preview(capture, detector, tracker, crossing_detector,
                 inference_state["error"] = exc
             stop.set()
 
-    cv2.namedWindow(PREVIEW_WINDOW, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
-    frame_width = frame_width or 1280
-    frame_height = frame_height or 720
-    preview_width = min(1280, max(320, frame_width))
-    preview_height = max(180, round(preview_width * frame_height / frame_width))
-    cv2.resizeWindow(PREVIEW_WINDOW, preview_width, preview_height)
-    try:
-        cv2.setWindowProperty(PREVIEW_WINDOW, cv2.WND_PROP_TOPMOST, 1)
-    except cv2.error:
-        pass
-    print("Live preview targets {} FPS; inference processes the latest frame independently. "
-          "Press Q or Esc to quit.".format(requested_fps), flush=True)
+    if show_window:
+        cv2.namedWindow(PREVIEW_WINDOW, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+        frame_width = frame_width or 1280
+        frame_height = frame_height or 720
+        preview_width = min(1280, max(320, frame_width))
+        preview_height = max(180, round(preview_width * frame_height / frame_width))
+        cv2.resizeWindow(PREVIEW_WINDOW, preview_width, preview_height)
+        try:
+            cv2.setWindowProperty(PREVIEW_WINDOW, cv2.WND_PROP_TOPMOST, 1)
+        except cv2.error:
+            pass
+        print("Live preview targets {} FPS. Press Q or Esc to quit.".format(
+            requested_fps), flush=True)
+    else:
+        print("Live camera capture targets {} FPS. Press Ctrl+C to quit.".format(
+            requested_fps), flush=True)
 
     capture_thread = threading.Thread(target=capture_loop, name="smartcart-camera", daemon=True)
     inference_thread = threading.Thread(target=inference_loop, name="smartcart-yolo", daemon=True)
     capture_thread.start()
     inference_thread.start()
-    actual_fps = capture.get(cv2.CAP_PROP_FPS)
-    preview_fps = min(requested_fps, actual_fps) if actual_fps and actual_fps > 0 else requested_fps
-    target_interval = 1.0 / preview_fps
-    last_render = time.perf_counter()
+    # Poll faster than capture so scheduling jitter does not skip fresh frames.
+    target_interval = 1.0 / (requested_fps * 2)
+    last_rendered_sequence = 0
+    last_published_sequence = 0
+    last_fps_report = time.perf_counter()
     try:
         while not stop.is_set():
             loop_start = time.perf_counter()
             with lock:
                 frame = camera_state["frame"]
-                if frame is not None:
+                sequence = camera_state["sequence"]
+                if frame is not None and sequence != last_rendered_sequence:
                     frame = frame.copy()
+                else:
+                    frame = None
                 tracks = list(inference_state["tracks"])
                 status = inference_state["status"]
                 camera_fps = camera_state["fps"]
@@ -274,29 +342,36 @@ def _run_live_camera_preview(capture, detector, tracker, crossing_detector,
                 if frame is not None:
                     _draw(frame, tracks, geometry, crossing_detector, status,
                           event_processor.counts, inference_fps, camera_fps)
+            if not show_window and loop_start - last_fps_report >= 5:
+                print("Measured CAM {:.1f} FPS | YOLO {:.1f} FPS".format(
+                    camera_fps, inference_fps), flush=True)
+                last_fps_report = loop_start
             if error is not None:
                 raise RuntimeError("live camera pipeline failed: {}".format(error)) from error
             if finished:
                 break
             if frame is not None:
-                cv2.imshow(PREVIEW_WINDOW, frame)
-                if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
-                    break
-            else:
+                last_rendered_sequence = sequence
+                if frame_publisher is not None and sequence != last_published_sequence:
+                    frame_publisher.publish(frame)
+                    last_published_sequence = sequence
+                if show_window:
+                    cv2.imshow(PREVIEW_WINDOW, frame)
+                    if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
+                        break
+            elif show_window:
                 cv2.waitKey(1)
             elapsed = time.perf_counter() - loop_start
             if elapsed < target_interval:
                 time.sleep(target_interval - elapsed)
-            now = time.perf_counter()
-            if now > last_render:
-                last_render = now
     finally:
         stop.set()
         capture_thread.join(timeout=1.0)
         capture.release()
         capture_thread.join(timeout=1.0)
         inference_thread.join(timeout=1.0)
-        cv2.destroyAllWindows()
+        if show_window:
+            cv2.destroyAllWindows()
     with lock:
         error = camera_state["error"] or inference_state["error"]
     if error is not None:
@@ -306,16 +381,27 @@ def _run_live_camera_preview(capture, detector, tracker, crossing_detector,
 
 def run_scanner(detector, source, product_names, geometry: ScanGeometry, *,
                 preview=False, headless=False, transport_mode="both",
-                width=1280, height=720, requested_fps=30):
+                width=1280, height=720, requested_fps=30, frame_publisher=None,
+                tracking_debug=False):
+    if tracking_debug:
+        enable_tracking_debug()
     products = set(product_names)
     tracker = ItemTracker(max_missed_seconds=geometry.max_missed_seconds,
                           min_iou=geometry.minimum_iou,
                           max_centroid_distance=geometry.maximum_centroid_distance,
-                          centroid_smoothing=geometry.centroid_smoothing)
+                          centroid_smoothing=geometry.centroid_smoothing,
+                          maximum_reacquisition_distance=geometry.maximum_reacquisition_distance,
+                          maximum_reacquisition_horizontal_distance=(
+                              geometry.maximum_reacquisition_horizontal_distance),
+                          maximum_vertical_speed=geometry.maximum_vertical_speed,
+                          maximum_box_size_ratio=geometry.maximum_box_size_ratio,
+                          reassociation_min_confidence=geometry.reassociation_min_confidence,
+                          association_ambiguity_margin=geometry.association_ambiguity_margin)
     crossing_detector = CrossingDetector(geometry, products)
     transport, _mock_receiver = make_transport(transport_mode)
     event_processor = EventProcessor(transport)
-    connect_session_hooks(transport, event_processor)
+    session_reset_pending = threading.Event()
+    connect_session_hooks(transport, event_processor, session_reset_pending.set)
     source = source_value(source)
     is_image = isinstance(source, str) and Path(source).suffix.lower() in IMAGE_SUFFIXES
     is_video_file = isinstance(source, str) and Path(source).is_file() and not is_image
@@ -349,12 +435,15 @@ def run_scanner(detector, source, product_names, geometry: ScanGeometry, *,
 
             frames = captured_frames()
 
-            if (preview and not headless and sys.platform == "win32"
+            if ((preview and not headless or frame_publisher is not None)
+                    and sys.platform == "win32"
                     and isinstance(source, int)
                     and not is_video_file):
                 return _run_live_camera_preview(
                     capture, detector, tracker, crossing_detector, event_processor,
                     geometry, products, requested_fps, frame_width, frame_height,
+                    frame_publisher, show_window=preview and not headless,
+                    session_reset_pending=session_reset_pending,
                 )
 
         if preview and not headless:
@@ -372,6 +461,11 @@ def run_scanner(detector, source, product_names, geometry: ScanGeometry, *,
             print("SmartCart preview opened. Press Q or Esc in the preview to quit.", flush=True)
 
         for frame in frames:
+            if session_reset_pending.is_set():
+                session_reset_pending.clear()
+                tracker.reset()
+                crossing_detector.reset()
+                event_processor.reset_counts()
             frame_height, frame_width = frame.shape[:2]
             now = time.perf_counter()
             interval = now - previous_time
@@ -389,6 +483,14 @@ def run_scanner(detector, source, product_names, geometry: ScanGeometry, *,
                 tracks, expired_track_ids=tracker.expired_track_ids, ambiguous=ambiguous
             )
             status = crossing_detector.last_status
+            if session_reset_pending.is_set():
+                session_reset_pending.clear()
+                tracker.reset()
+                crossing_detector.reset()
+                event_processor.reset_counts()
+                crossing = None
+                tracks = []
+                status = event_processor.last_status
             if crossing is not None:
                 event = event_processor.process(crossing)
                 status = event_processor.last_status
@@ -396,9 +498,16 @@ def run_scanner(detector, source, product_names, geometry: ScanGeometry, *,
             if preview and not headless:
                 _draw(frame, tracks, geometry, crossing_detector, status,
                       event_processor.counts, fps)
+                if frame_publisher is not None:
+                    frame_publisher.publish(frame)
                 cv2.imshow(PREVIEW_WINDOW, frame)
                 if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
                     break
+            elif frame_publisher is not None:
+                annotated = frame.copy()
+                _draw(annotated, tracks, geometry, crossing_detector, status,
+                      event_processor.counts, fps)
+                frame_publisher.publish(annotated)
         return event_processor
     finally:
         if capture is not None:

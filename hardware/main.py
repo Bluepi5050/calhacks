@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from .detector import YoloDetector
+from .http_preview import HttpPreview
 from .product_config import DEFAULT_PRODUCTS_CONFIG, load_products, resolve_products_config
 from .scan_geometry import DEFAULT_GEOMETRY_PATH, ScanGeometry
 from .scanner import run_scanner
@@ -18,15 +19,23 @@ def parse_args(argv=None):
                         help="detection confidence (default from scan_geometry.json)")
     parser.add_argument("--width", type=int, default=640,
                         help="requested camera width in pixels (default: 640)")
-    parser.add_argument("--height", type=int, default=360,
-                        help="requested camera height in pixels (default: 360)")
+    parser.add_argument("--height", type=int, default=480,
+                        help="requested camera height in pixels (default: 480)")
     parser.add_argument("--fps", type=float, default=30,
                         help="requested camera capture rate (default: 30)")
+    parser.add_argument("--imgsz", type=int, default=416,
+                        help="YOLO inference input size (default: 416; use 640 for more detail)")
     parser.add_argument("--products-config", type=Path, default=DEFAULT_PRODUCTS_CONFIG)
     parser.add_argument("--geometry-config", type=Path, default=DEFAULT_GEOMETRY_PATH)
     parser.add_argument("--preview", action="store_true")
     parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--http-port", type=int,
+                        help="serve the annotated camera in Chrome on this port")
+    parser.add_argument("--http-host", default="127.0.0.1",
+                        help="HTTP bind address (default: 127.0.0.1)")
     parser.add_argument("--device", help="Ultralytics inference device, e.g. cpu or 0")
+    parser.add_argument("--tracking-debug", action="store_true",
+                        help="log track recovery and crossing decisions")
     parser.add_argument("--transport", choices=("both", "console", "mock", "ble", "ble+console"),
                         default="both",
                         help="ble / ble+console: send events to the Bag It app over Bluetooth "
@@ -36,8 +45,10 @@ def parse_args(argv=None):
         parser.error("--preview and --headless cannot be combined")
     if args.confidence is not None and not 0 <= args.confidence <= 1:
         parser.error("--confidence must be between 0 and 1")
-    if args.width <= 0 or args.height <= 0 or args.fps <= 0:
-        parser.error("--width, --height, and --fps must be positive")
+    if args.width <= 0 or args.height <= 0 or args.fps <= 0 or args.imgsz <= 0:
+        parser.error("--width, --height, --fps, and --imgsz must be positive")
+    if args.http_port is not None and not 1 <= args.http_port <= 65535:
+        parser.error("--http-port must be between 1 and 65535")
     try:
         args.geometry = ScanGeometry.from_file(args.geometry_config)
     except ValueError as exc:
@@ -49,14 +60,24 @@ def parse_args(argv=None):
 
 
 def run(args):
-    detector = YoloDetector(args.model, args.confidence, args.device)
+    detector = YoloDetector(args.model, args.confidence, args.device,
+                            image_size=args.imgsz)
     products, class_ids = load_products(args.products_config, detector.model.names)
     detector.set_class_ids(class_ids)
     print("Configured products: {}".format(", ".join(products)))
-    run_scanner(detector, args.source, products, args.geometry,
-                preview=args.preview, headless=args.headless,
-                transport_mode=args.transport, width=args.width,
-                height=args.height, requested_fps=args.fps)
+    publisher = None
+    try:
+        if args.http_port is not None:
+            publisher = HttpPreview(args.http_host, args.http_port).start()
+        run_scanner(detector, args.source, products, args.geometry,
+                    preview=args.preview, headless=args.headless,
+                    transport_mode=args.transport, width=args.width,
+                    height=args.height, requested_fps=args.fps,
+                    frame_publisher=publisher,
+                    tracking_debug=args.tracking_debug)
+    finally:
+        if publisher is not None:
+            publisher.close()
     return 0
 
 

@@ -19,6 +19,8 @@ def main(argv=None):
     parser.add_argument("--products-config", type=Path, default=DEFAULT_PRODUCTS_CONFIG)
     parser.add_argument("--geometry-config", type=Path, default=DEFAULT_GEOMETRY_PATH)
     parser.add_argument("--preview", action="store_true")
+    parser.add_argument("--tracking-debug", action="store_true",
+                        help="log track recovery and crossing decisions")
     parser.add_argument("--transport", choices=("both", "console", "mock", "ble", "ble+console"),
                         default="both",
                         help="ble / ble+console: send events to the Bag It app over Bluetooth "
@@ -44,7 +46,8 @@ def main(argv=None):
         detector = TensorRTDetector(args.engine, confidence=args.confidence)
         run_scanner(detector, args.source, products, geometry,
                     preview=args.preview, headless=not args.preview,
-                    transport_mode=args.transport)
+                    transport_mode=args.transport,
+                    tracking_debug=args.tracking_debug)
         return 0
     except KeyboardInterrupt:
         return 130
