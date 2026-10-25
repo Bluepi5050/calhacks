@@ -134,7 +134,7 @@ class PeripheralOverMockBluez(dbusmock.DBusTestCase if HAVE_DBUS else unittest.T
 
     # -- tests ----------------------------------------------------------------------------------
     def test_full_flow(self):
-        adapter = self.add_adapter()
+        self.add_adapter()
         address = str(self.adapter_props.Get("org.bluez.Adapter1", "Address"))
         expect_name = p.device_name_from_address(address)
         self.spawn_cart()

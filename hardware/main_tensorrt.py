@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .product_config import DEFAULT_PRODUCTS_CONFIG, load_products, resolve_products_config
 from .scan_geometry import DEFAULT_GEOMETRY_PATH, ScanGeometry
-from .scanner import run_scanner
+from .scanner import add_transport_argument, run_scanner
 from .tensorrt_detector import TensorRTDetector
 
 
@@ -19,10 +19,7 @@ def main(argv=None):
     parser.add_argument("--products-config", type=Path, default=DEFAULT_PRODUCTS_CONFIG)
     parser.add_argument("--geometry-config", type=Path, default=DEFAULT_GEOMETRY_PATH)
     parser.add_argument("--preview", action="store_true")
-    parser.add_argument("--transport", choices=("both", "console", "mock", "ble", "ble+console"),
-                        default="both",
-                        help="ble / ble+console: send events to the Bag It app over Bluetooth "
-                             "(see hardware/smartcart_ble/README.md)")
+    add_transport_argument(parser)
     args = parser.parse_args(argv)
     if args.confidence is not None and not 0 <= args.confidence <= 1:
         parser.error("--confidence must be between 0 and 1")

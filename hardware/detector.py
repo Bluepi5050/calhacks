@@ -3,9 +3,6 @@
 from .item_tracker import Detection
 
 
-COCO_CLASS_IDS = {"apple": 47, "banana": 46, "orange": 49}
-
-
 class YoloDetector:
     def __init__(self, model_path="yolov8n.pt", confidence=0.5, device=None):
         try:

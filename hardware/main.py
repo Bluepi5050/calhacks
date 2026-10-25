@@ -7,7 +7,7 @@ from pathlib import Path
 from .detector import YoloDetector
 from .product_config import DEFAULT_PRODUCTS_CONFIG, load_products, resolve_products_config
 from .scan_geometry import DEFAULT_GEOMETRY_PATH, ScanGeometry
-from .scanner import run_scanner
+from .scanner import add_transport_argument, run_scanner
 
 
 def parse_args(argv=None):
@@ -27,10 +27,7 @@ def parse_args(argv=None):
     parser.add_argument("--preview", action="store_true")
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--device", help="Ultralytics inference device, e.g. cpu or 0")
-    parser.add_argument("--transport", choices=("both", "console", "mock", "ble", "ble+console"),
-                        default="both",
-                        help="ble / ble+console: send events to the Bag It app over Bluetooth "
-                             "(see hardware/smartcart_ble/README.md)")
+    add_transport_argument(parser)
     args = parser.parse_args(argv)
     if args.preview and args.headless:
         parser.error("--preview and --headless cannot be combined")

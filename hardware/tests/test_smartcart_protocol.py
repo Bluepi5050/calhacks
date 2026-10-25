@@ -4,10 +4,8 @@ import unittest
 
 try:
     from hardware.smartcart_ble import protocol as p
-    from hardware.smartcart_ble import session as sm
 except ImportError:  # standalone checkout: smartcart_ble at the top level
     from smartcart_ble import protocol as p
-    from smartcart_ble import session as sm
 
 
 class ControlParsing(unittest.TestCase):

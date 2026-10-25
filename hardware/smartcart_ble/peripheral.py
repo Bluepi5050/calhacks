@@ -26,7 +26,7 @@ from dbus.mainloop.glib import DBusGMainLoop
 from gi.repository import GLib
 
 from . import protocol as p
-from .session import EVENTS, STATUS, BUFFER_SIZE, STALE_AFTER_S, CartSession, Effects, Notice, SeqMemory
+from .session import EVENTS, BUFFER_SIZE, STALE_AFTER_S, CartSession, Effects, Notice, SeqMemory
 
 log = logging.getLogger("smartcart_ble")
 
