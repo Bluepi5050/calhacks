@@ -131,7 +131,7 @@ class SmartCartTest {
         assertEquals("queued", s.onEvent("6|A|apple|90"))
         // An ERR clears the pending START; the next STATUS tries again.
         s.setSession("s3", "bayside-grocer"); assertEquals("START|s3|bayside-grocer", r.writes.last())
-        s.onStatus("ERR|BUSY|scanner restarting")
+        s.onStatus("ERR|BAD_SID|unknown session")
         s.onStatus("S|s2|ACTIVE|6|0|SmartCart-3F2A"); assertEquals("START|s3|bayside-grocer", r.writes.last())
         assertEquals(2, r.writes.count { it == "START|s3|bayside-grocer" })
         s.onStatus("OK|START|s3")
@@ -144,16 +144,64 @@ class SmartCartTest {
         val r3 = Rig(); r3.sync.onConnected(); r3.sync.setSession("S-UPPER", "bayside-grocer"); assertTrue(r3.writes.isEmpty())
     }
 
-    @Test fun lostSessionHook() {
+    @Test fun lostSessionV12() {
+        // known from the backend's lastSeq: a cart that comes back IDLE has lost the session → hook, no START|s5.
         val r = Rig(); val s = r.sync
         var asked: String? = null
         s.onLost = { asked = it; true }
-        s.onConnected(); s.setSession("s4", "bayside-grocer")           // no STATUS yet: START as the contract says
-        assertEquals("START|s4|bayside-grocer", r.writes.last()); s.onStatus("OK|START|s4")
-        s.onDisconnected(); s.onConnected()
-        s.onStatus("S|-|IDLE|0|0|SmartCart-3F2A")                       // cart rebooted and lost s4
-        assertEquals("s4", asked); assertEquals(1, r.writes.size)        // the hook took over (rekey), no START|s4
-        assertFalse("off until the contract adopts it", CartRules.REKEY_LOST_SESSION)
+        s.setSession("s5", "bayside-grocer", lastSeq = 7)
+        s.onConnected(); s.onStatus("S|-|IDLE|0|0|SmartCart-3F2A")
+        assertEquals("s5", asked); assertTrue(r.writes.none { it.startsWith("START") })
+        // Same sid but behind what we know (last_seq 3 < 7): lost too.
+        asked = null; s.onDisconnected(); s.onConnected(); s.onStatus("S|s5|ACTIVE|3|0|SmartCart-3F2A")
+        assertEquals("s5", asked)
+        // Cart at or ahead of what we know: an ordinary resume.
+        s.onLost = { fail("not lost"); true }
+        s.onDisconnected(); s.onConnected(); s.onStatus("S|s5|ACTIVE|9|0|SmartCart-3F2A")
+        assertEquals("START|s5|bayside-grocer", r.writes.last())
+        s.onStatus("OK|START|s5")
+        // Mid-session STATUS notification behind the highest seq the phone received: lost.
+        listOf("10|A|apple|90", "11|A|apple|90", "12|A|banana|90").forEach { s.onEvent(it) }
+        assertEquals(12L, s.known("s5"))
+        asked = null; s.onLost = { asked = it; true }
+        s.onStatus("S|s5|ACTIVE|11|0|SmartCart-3F2A")
+        assertNull(s.confirmed); assertEquals("s5", asked)
+        // Nothing numbered yet (known 0): plain START, never a rekey.
+        val r2 = Rig(); r2.sync.onLost = { fail("known is 0"); true }
+        r2.sync.onConnected(); r2.sync.setSession("s8", "bayside-grocer"); r2.sync.onStatus("S|-|IDLE|0|0|SmartCart-3F2A")
+        assertEquals("START|s8|bayside-grocer", r2.writes.last())
+        // ERR|BUSY: wait for the reconnect, no SYNC.
+        val n = r2.writes.size; r2.sync.onStatus("ERR|BUSY|cart shutting down"); assertEquals(n, r2.writes.size)
+        assertTrue(CartRules.REKEY_LOST_SESSION)
+    }
+
+    /** v1.2 rekey end to end against MockCart: cart reboots mid-trip → drain → rekey → START new sid → seq 1 counts. */
+    @Test fun rekeyAfterCartRestart() {
+        val fwd = mutableListOf<String>(); val writes = mutableListOf<String>()
+        val statuses = ArrayDeque<String>(); val events = ArrayDeque<String>()
+        var mock = MockCart("SmartCart-3F2A", { statuses += it }, { events += it })
+        var lostSid: String? = null
+        val sync = CartSync(write = { writes += it; mock.control(it) },
+            forward = { e -> fwd += "${e.sid}:${e.seq} ${e.label}"; HwOutcome(if (e.sid == "s1") "accepted" else if (e.sid == "s2") "accepted" else "no_session", "") },
+            store = MemStore())
+        sync.onLost = { lostSid = it; true }
+        fun drain() { while (statuses.isNotEmpty() || events.isNotEmpty()) { statuses.removeFirstOrNull()?.let(sync::onStatus); events.removeFirstOrNull()?.let(sync::onEvent) } }
+        sync.onConnected(); sync.setSession("s1", "bayside-grocer"); sync.onStatus(mock.status()); drain()
+        mock.crossing("A", "apple"); mock.crossing("A", "banana"); drain()
+        // The cart reboots before the backend answered event 2 (still queued on the phone).
+        runBlocking { sync.pump() }
+        mock.crossing("A", "orange"); drain()                    // seq 3 queued, not yet forwarded
+        sync.onDisconnected()
+        mock = MockCart("SmartCart-3F2A", { statuses += it }, { events += it })   // fresh after restart: IDLE
+        sync.onConnected(); sync.onStatus(mock.status()); drain()
+        assertEquals("s1", lostSid); assertFalse("no START of the lost sid", mock.active)
+        // The model's handler: drain the old sid, rekey, set the new session.
+        assertTrue(runBlocking { sync.drain("s1") })
+        assertEquals(listOf("s1:1 apple", "s1:2 banana", "s1:3 orange"), fwd)
+        sync.setSession("s2", "bayside-grocer", lastSeq = 0); drain()
+        assertEquals("START|s2|bayside-grocer", writes.last { it.startsWith("START") }); assertEquals("s2", sync.confirmed)
+        mock.crossing("A", "apple"); drain(); runBlocking { sync.pump() }
+        assertEquals("s2:1 apple", fwd.last()); assertEquals("ACK|s2|1", writes.last())
     }
 
     /** Contract §6 acceptance flow against MockCart (the Jetson stand-in) and a fake backend that keeps a cart. */

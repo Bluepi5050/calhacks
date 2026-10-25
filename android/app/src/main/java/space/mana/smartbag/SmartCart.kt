@@ -74,11 +74,10 @@ object CartProtocol {
 
 object CartRules {
     /**
-     * Backend issue 1 (hardware-protocol/issues/backend): a cart that lost our session restarts the same sid at seq 1 and the
-     * backend answers "duplicate". The fix (shop_session_rekey, live) is not in contract v1.1 yet, so it stays off until the
-     * contract adopts it; the code path is built and tested.
+     * Contract v1.2 §3: a cart that lost our session (restart, power loss, stale stop) gets a new session id from
+     * shop_session_rekey instead of resuming the old one, so its new events can't collide with ones already processed.
      */
-    const val REKEY_LOST_SESSION = false
+    const val REKEY_LOST_SESSION = true                      // contract v1.2 §3 "Lost session"
 }
 
 /** What the backend said about one hardware event (contract §5 HwEventResult). */
@@ -121,10 +120,16 @@ class CartSync(
     private val answered = LinkedHashMap<String, MutableSet<Long>>()  // sid -> seqs the backend answered (bounded)
     var pumping = false; private set
     /**
-     * The cart doesn't have our session (rebooted, or its own stale stop). Return true if the caller takes over (e.g.
-     * asks the backend for a new session id) instead of the contract's START|sid. See [CartRules.REKEY_LOST_SESSION].
+     * Contract v1.2 §3 "Lost session": the cart doesn't have our session (or is behind it) and events were already
+     * numbered for it (known > 0). The handler drains the queue, calls shop_session_rekey and sets the new session; it
+     * returns true when it takes over. If null or false, START|sid as before. See [CartRules.REKEY_LOST_SESSION].
      */
     var onLost: ((String) -> Boolean)? = null
+    private val backendSeq = HashMap<String, Long>()          // SessionState.lastSeq per sid
+    private val highest = HashMap<String, Long>()             // highest seq received from the cart per sid
+    /** known = max(backend lastSeq, highest seq received from the cart) for [sid]. */
+    fun known(sid: String) = maxOf(backendSeq[sid] ?: 0L, highest[sid] ?: 0L)
+    fun noteBackendSeq(sid: String, lastSeq: Long) { if (sid.isNotEmpty()) backendSeq[sid] = maxOf(backendSeq[sid] ?: 0L, lastSeq) }
     var lastOutcome: HwOutcome? = null; private set
     val pending: List<QueuedEvent> get() = queue.toList()
 
@@ -151,7 +156,8 @@ class CartSync(
     fun onDisconnected() { connected = false; confirmed = null; pendingStart = null; log("disconnected") }
 
     /** The backend session changed (entered a store, walked out, signed out). */
-    fun setSession(sid: String?, storeId: String?) {
+    fun setSession(sid: String?, storeId: String?, lastSeq: Long = 0L) {
+        if (!sid.isNullOrEmpty()) noteBackendSeq(sid, lastSeq)
         val next = if (sid.isNullOrEmpty() || storeId.isNullOrEmpty()) null else sid to storeId
         if (next == desired) return
         val old = confirmed ?: desired?.first
@@ -172,7 +178,9 @@ class CartSync(
         when {
             want != null && pendingStart == null && confirmed != want.first -> {
                 if (!CartProtocol.validSid(want.first) || !CartProtocol.validStore(want.second)) { log("session id not usable on the cart: ${want.first}"); return }
-                if (c != null && !(c.sid == want.first && c.active) && onLost?.invoke(want.first) == true) { log("cart doesn't have ${want.first}: new session requested"); return }
+                if (c != null && lost(c, want.first) && known(want.first) > 0 && CartRules.REKEY_LOST_SESSION && onLost?.invoke(want.first) == true) {
+                    log("cart lost ${want.first} (known ${known(want.first)}): new session requested"); return
+                }
                 pendingStart = want.first; pendingSince = now(); errSincePending = false
                 send(CartProtocol.start(want.first, want.second))       // resume if the cart still has it, else a fresh start
             }
@@ -186,8 +194,8 @@ class CartSync(
             null -> log("unreadable status ignored")
             is CartProtocol.Status.State -> {
                 cart = s
-                // A cart that reports a different (or no) session after our confirmation lost it: start again.
-                if (confirmed != null && (s.sid != confirmed || !s.active)) confirmed = null
+                // Holding a session and the cart doesn't have it (or is behind what we know): lost, reconcile handles it.
+                if (confirmed != null && lost(s, confirmed!!)) confirmed = null
                 // STATUS after an ERR (we asked with SYNC) and still no OK: our START didn't take. Send it again.
                 if (errSincePending && pendingStart != null) { pendingStart = null; errSincePending = false }
                 reconcile()
@@ -197,7 +205,9 @@ class CartSync(
                 else if (confirmed != null) { confirmed = null; reconcile() }        // the cart now runs someone else's session
             is CartProtocol.Status.OkStop -> if (s.sid == confirmed) { confirmed = null; reconcile() }
             // An ERR may answer an ACK or SYNC, not our START: keep waiting and ask for STATUS; the watchdog retries.
-            is CartProtocol.Status.Err -> { log("cart error ${s.code}: ${s.detail}"); if (pendingStart != null) errSincePending = true; send(CartProtocol.SYNC) }
+            // BUSY (e.g. cart shutting down): wait for the reconnect, it isn't a failure. Others: SYNC, retry START after 5 s.
+            is CartProtocol.Status.Err -> if (s.code == "BUSY") log("cart busy (${s.detail}): waiting for it to reconnect")
+                else { log("cart error ${s.code}: ${s.detail}"); if (pendingStart != null) errSincePending = true; send(CartProtocol.SYNC) }
         }
     }
 
@@ -206,6 +216,7 @@ class CartSync(
         log("← $text")
         val ev = CartProtocol.event(text) ?: return "unreadable event ignored".also(log)
         val sid = confirmed ?: return "ignored: no confirmed session".also(log)
+        highest[sid] = maxOf(highest[sid] ?: 0L, ev.seq)
         if (answered[sid]?.contains(ev.seq) == true) { send(CartProtocol.ack(sid, ev.seq)); return "resent, acked again" }
         if (queue.any { it.sid == sid && it.seq == ev.seq }) return "duplicate, already queued"
         queue.addLast(QueuedEvent(sid, ev.seq, ev.action, ev.label, ev.confidence))
@@ -236,6 +247,12 @@ class CartSync(
     }
 
     fun sync() = send(CartProtocol.SYNC)
+
+    /** v1.2: lost = STATUS is not S|sid|ACTIVE, or it is but its last_seq is behind what we know. */
+    private fun lost(c: CartProtocol.Status.State, sid: String) = !(c.sid == sid && c.active) || c.lastSeq < known(sid)
+
+    /** Rekey step (1): forward every queued event of [sid] for a terminal answer. False if the backend is unreachable. */
+    suspend fun drain(sid: String): Boolean = pump() && queue.none { it.sid == sid }
 
     /**
      * Call every few seconds while connected. The contract promises no spontaneous STATUS, so if our START has gone

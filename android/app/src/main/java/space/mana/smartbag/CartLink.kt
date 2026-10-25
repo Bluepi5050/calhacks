@@ -276,6 +276,9 @@ class CartLink(
                 }
             }
         }
+        // v1.2: a "service changed" indication means the cart's GATT table changed (e.g. it restarted): treat as a disconnect.
+        override fun onServiceChanged(g: BluetoothGatt) { main.post { if (g === gatt) fail("service changed") } }
+
         override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
             main.post {
                 if (g !== gatt) return@post

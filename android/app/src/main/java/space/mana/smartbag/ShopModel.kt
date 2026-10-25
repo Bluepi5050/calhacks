@@ -131,13 +131,21 @@ class ShopModel(private val app: Application) {
             log = ::clog)
         if (cartSync.pending.isNotEmpty()) main.post { pumpCart() }       // events left from before a restart
         scope.launch { while (true) { delay(5_000); cartSync.watchdog() } }
+        // Contract v1.2 §3 "Lost session": drain the old sid's queue (terminal answers), rekey, persist, START the new sid.
         cartSync.onLost = lost@{ sid ->
+            if (rekeying) return@lost true                       // already on it: never START the lost sid meanwhile
             val s = session
-            if (!CartRules.REKEY_LOST_SESSION || s == null || s.sessionId != sid || s.lastSeq == 0L || rekeying) return@lost false
+            if (s == null || s.sessionId != sid) return@lost false
             rekeying = true
             ops.trySend {
-                try { val n = Api.sessionRekey(); session = n; cartSync.setSession(n.sessionId.takeIf { n.active }, n.storeId) }
-                catch (_: Exception) { cartSync.setSession(null, null); sessionAsked = null }
+                try {
+                    if (!cartSync.drain(sid)) { clog("rekey waits: backend unreachable (retried on the next STATUS)"); return@trySend }
+                    val n = Api.sessionRekey()
+                    clog("rekeyed $sid → ${n.sessionId}")
+                    session = n
+                    prefs.edit().putString("cart_session", "${n.sessionId}|${n.storeId}").apply()
+                    cartSync.setSession(n.sessionId.takeIf { n.active }, n.storeId, n.lastSeq)
+                } catch (e: Exception) { clog("rekey failed: ${e.message}") }
                 finally { rekeying = false }
             }
             true
@@ -443,7 +451,8 @@ class ShopModel(private val app: Application) {
             // The trip is over: STOP the cart now (later detections can't change it) and fetch the trip summary.
             cartSync.setSession(null, null); session = null; recs = null; sessionAsked = null
             summary = null
-            if (hwBackend != false) ops.trySend { summary = try { Api.summary(r.id) } catch (_: Exception) { null } }
+            // v1.2 §4.6: shop_summary(0) after every walk-out; here it is this receipt's trip.
+            if (hwBackend != false) ops.trySend { summary = try { Api.summary(0).takeIf { it.receipt.id == r.id } } catch (_: Exception) { null } }
             // The bag's light says "paid" only when it really was; a payment-due trip leaves it dark.
             if (r.status == "paid") link.send("PAID ${r.code}")
             // In the foreground the receipt is on screen; still claim the code so a server push can't repeat it.
@@ -604,7 +613,7 @@ class ShopModel(private val app: Application) {
     /** The backend answered a cart event: show its cart (the same CartState as every other call). */
     private fun onHw(r: HwEventResult, e: QueuedEvent) {
         lastHw = HwOutcome(r.status, r.message)
-        if (r.state.sessionId.isNotEmpty()) session = r.state
+        if (r.state.sessionId.isNotEmpty()) { session = r.state; cartSync.noteBackendSeq(r.state.sessionId, r.state.lastSeq) }
         noteBudget(r.state)
         apply(r.state.cart, false)
         if (r.status == "accepted" && e.action == "A") {
@@ -615,7 +624,11 @@ class ShopModel(private val app: Application) {
         // The backend says this session is over or not ours while we think we're shopping: find the current one.
         if ((r.status == "stale_session" || r.status == "no_session") && e.sid == cartSync.desired?.first) {
             val id = (store as? StoreState.InStore)?.id
-            if (id != null) { session = null; sessionAsked = null; cartSync.setSession(null, null); sessionFor(id) }
+            // v1.2 §4.7: (acked already) shop_locate → shop_session_state → START the new sid.
+            if (id != null) {
+                session = null; sessionAsked = id; cartSync.setSession(null, null)
+                ops.trySend { fix?.let { l -> apply(Api.locate(l.latitude, l.longitude, l.accuracy), true) }; refreshSession() }
+            }
         }
     }
 
@@ -646,7 +659,10 @@ class ShopModel(private val app: Application) {
             val s = Api.sessionState()
             hwBackend = true
             noteBudget(s)
-            if (s.active && s.sessionId.isNotEmpty()) { session = s; cartSync.setSession(s.sessionId, s.storeId); scheduleRecs() }
+            if (s.active && s.sessionId.isNotEmpty()) {
+                session = s; prefs.edit().putString("cart_session", "${s.sessionId}|${s.storeId}").apply()
+                cartSync.setSession(s.sessionId, s.storeId, s.lastSeq); scheduleRecs()
+            }
             else { session = null; cartSync.setSession(null, null) }
         } catch (e: ApiException) {
             // Not deployed yet (unknown procedure): shopping works as before, without a cart session.
@@ -705,7 +721,7 @@ class ShopModel(private val app: Application) {
             mock = MockCart("SmartCart-TEST", { t -> cartStatus = t; cartSync.onStatus(t) }, { t -> cartEventIn(t) }, { f -> main.post(f) })
             clog("simulated cart on")
             cartSync.onConnected()
-            session?.takeIf { it.active }?.let { cartSync.setSession(it.sessionId, it.storeId) }   // in a store: START the simulated cart
+            session?.takeIf { it.active }?.let { cartSync.setSession(it.sessionId, it.storeId, it.lastSeq) }   // in a store: START the simulated cart
             mock?.let { m -> main.post { cartStatus = m.status(); cartSync.onStatus(m.status()) } }
         } else {
             cartSync.onDisconnected(); simulated = false; mock = null; clog("simulated cart off")
