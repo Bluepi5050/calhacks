@@ -247,3 +247,7 @@ hardware/models/
 # hardware/test_camera.py output
 camera_test.jpg
 .camera_test.jpg
+
+# Stripe charger state (which orders were charged) and local secrets
+console/.stripe-charger.json
+console/.env*
