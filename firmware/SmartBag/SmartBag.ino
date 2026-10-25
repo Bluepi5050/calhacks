@@ -6,7 +6,7 @@
 // Swap the Serial read in loop() for your RFID / barcode reader when the hardware is ready.
 // BLE packets carry 20 bytes by default; the app reassembles text across packets until "\n".
 // Pairing (v2): every bag advertises a unique name, SmartBag-XXXX (last two bytes of its MAC). When the phone
-// writes "HELLO", the light blinks three times and the bag answers "BAG <name> fw2" so the app can confirm
+// writes "HELLO", the light blinks three times and the bag answers "BAG <name> fw3" so the app can confirm
 // which bag is in your hand. Apps treat lines starting with "BAG " as control lines, never as items.
 // Walk-out signal (v3): "PAID <code>" = the trip was charged: one short blink (as before). "DUE <code>" = the trip
 // ended payment due (no card, nothing charged): three slow blinks, 600 ms on / 400 ms off, clearly different from
