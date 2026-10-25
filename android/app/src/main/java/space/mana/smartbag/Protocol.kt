@@ -52,3 +52,6 @@ object Protocol {
         return BagEvent(op, key(sku), uid, 1)
     }
 }
+
+/** What the NUS bag is told after a walk-out: "PAID <code>" when charged, "DUE <code>" when payment is due (firmware v3). */
+fun walkOutSignal(r: Receipt): String = if (r.status == "paid") "PAID ${r.code}" else "DUE ${r.code}"

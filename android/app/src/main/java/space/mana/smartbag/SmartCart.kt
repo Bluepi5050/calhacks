@@ -54,7 +54,8 @@ object CartProtocol {
         return when (f.firstOrNull()) {
             "S" -> if (f.size != 6 || (f[2] != "IDLE" && f[2] != "ACTIVE")) null else {
                 val sid = f[1].takeIf { it != "-" }
-                if (sid != null && !validSid(sid)) null
+                // device_name is always present (SmartCart-XXXX): an empty one means the message was cut short.
+                if ((sid != null && !validSid(sid)) || f[5].isEmpty()) null
                 else Status.State(sid, f[2] == "ACTIVE", f[3].toLongOrNull() ?: return null, f[4].toIntOrNull() ?: return null, f[5])
             }
             "OK" -> when {
@@ -345,4 +346,44 @@ class MockCart(
         post { onEvent(m) }
         return true
     }
+}
+
+/**
+ * MTU handling (Android 3.6). The contract wants >= 64 before subscribing. Real phones sometimes don't answer
+ * requestMtu (Android 14+ already exchanged MTU 517 itself when the link came up; ATT allows one exchange per link), so a
+ * missing answer isn't proof of a small MTU. Pure, unit tested; CartLink applies it.
+ */
+object MtuPolicy {
+    /** ATT payload with the default MTU 23: a notification cut to this size by a small MTU is the tell-tale. */
+    const val DEFAULT_PAYLOAD = 20
+    enum class Next { DISCOVER, RETRY_AFTER_DISCOVERY, PROCEED, TOO_SMALL, UNCONFIRMED }
+
+    /**
+     * After an MTU request. [answer] = the MTU Android reported for our request (null = no answer / refused);
+     * [observed] = the largest MTU Android reported at any time on this link (also its own exchange); [retried] = this was
+     * the second request (made after service discovery).
+     */
+    fun next(answer: Int?, observed: Int, retried: Boolean, sdk: Int): Next = when {
+        answer != null && answer >= CartProtocol.MIN_MTU -> if (retried) Next.PROCEED else Next.DISCOVER
+        answer != null -> Next.TOO_SMALL                                   // an explicit small MTU: the contract can't work
+        observed >= CartProtocol.MIN_MTU -> if (retried) Next.PROCEED else Next.DISCOVER
+        !retried -> Next.RETRY_AFTER_DISCOVERY                             // some stacks only answer after discovery
+        // Still no MTU. Android 14+ exchanges MTU 517 itself when the link comes up (assumed, and messages are still
+        // checked for cuts). Older Android: don't guess, reconnect and ask again (what recovered Scott's first link).
+        sdk >= 34 -> Next.PROCEED
+        else -> Next.UNCONFIRMED
+    }
+
+    /** Is the MTU known (observed >= 64)? Links proceeding on the Android 14+ assumption are not trusted: cuts are watched. */
+    fun trusted(observed: Int) = observed >= CartProtocol.MIN_MTU
+
+    /**
+     * With an unconfirmed MTU, any notification of exactly [DEFAULT_PAYLOAD] bytes may have been cut by a 23-byte MTU,
+     * even if what's left still parses (a cut STATUS can look like a valid one with a smaller last_seq, which would
+     * trigger a false lost-session; a cut event can lose a digit). No valid STATUS is that short (the device name alone is
+     * 14 bytes), and a valid 20-byte event is rare; either way the link is treated as too small and reconnected (the cart
+     * keeps unacked events). Reads are never cut (Android uses long reads), so the STATUS read stays intact.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun truncated(bytes: Int, parsed: Boolean, trusted: Boolean) = !trusted && bytes == DEFAULT_PAYLOAD
 }

@@ -19,8 +19,8 @@ android {
         applicationId = "space.mana.smartbag"
         minSdk = 26
         targetSdk = 34
-        versionCode = 8
-        versionName = "3.5"
+        versionCode = 10
+        versionName = "3.6"
         buildConfigField("String", "STDB_HOST", "\"$stdbHost\"")
         buildConfigField("String", "STDB_DB", "\"$stdbDb\"")
         buildConfigField("boolean", "FCM", hasFcm.toString())

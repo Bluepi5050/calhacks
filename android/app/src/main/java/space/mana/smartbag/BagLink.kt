@@ -39,7 +39,7 @@ fun bagDisplayName(bleName: String): String {
     return if (suffix.isNullOrEmpty() || suffix == "01") "Bag" else "Bag $suffix"
 }
 
-/** Lines the bag sends that are about the bag itself (pairing hello), never items: "BAG <name> fw2". */
+/** Lines the bag sends that are about the bag itself (pairing hello), never items: "BAG <name> fw3". */
 fun isControlLine(line: String) = line.trim().startsWith("BAG ")
 
 /**
@@ -315,7 +315,7 @@ class BagLink(
         }
     }
 
-    /** Control lines ("BAG <name> fw2") are about the bag itself and never reach the shop as items. */
+    /** Control lines ("BAG <name> fw3") are about the bag itself and never reach the shop as items. */
     private fun deliver(line: String) { if (isControlLine(line)) onControl(line) else onLine(line) }
 
     private fun pump() {

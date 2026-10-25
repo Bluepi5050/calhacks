@@ -291,4 +291,38 @@ class SmartCartTest {
         s.onStatus("OK|START|s2"); assertEquals("s2", s.confirmed)
         clock += 60_000; val m = writes.size; s.watchdog(); assertEquals("confirmed: watchdog quiet", m, writes.size)
     }
+
+    @Test fun mtuPolicy() {
+        assertEquals(MtuPolicy.Next.DISCOVER, MtuPolicy.next(247, 0, false, 30))
+        assertEquals(MtuPolicy.Next.DISCOVER, MtuPolicy.next(64, 64, false, 30))
+        assertEquals("an explicit small MTU can't carry the protocol", MtuPolicy.Next.TOO_SMALL, MtuPolicy.next(23, 23, false, 34))
+        assertEquals("no answer, but Android already reported 517 on this link", MtuPolicy.Next.DISCOVER, MtuPolicy.next(null, 517, false, 30))
+        assertEquals("no answer: ask once more after discovery", MtuPolicy.Next.RETRY_AFTER_DISCOVERY, MtuPolicy.next(null, 0, false, 34))
+        assertEquals(MtuPolicy.Next.PROCEED, MtuPolicy.next(247, 0, true, 30))
+        assertEquals("Android 14+: proceed on its own 517 exchange (cuts still watched)", MtuPolicy.Next.PROCEED, MtuPolicy.next(null, 0, true, 34))
+        assertEquals("older Android: never guess, reconnect", MtuPolicy.Next.UNCONFIRMED, MtuPolicy.next(null, 0, true, 33))
+        assertEquals(MtuPolicy.Next.PROCEED, MtuPolicy.next(null, 185, true, 26))
+        assertEquals(MtuPolicy.Next.TOO_SMALL, MtuPolicy.next(23, 0, true, 34))
+        assertTrue(MtuPolicy.trusted(247)); assertFalse("assumed is not trusted: cuts are watched", MtuPolicy.trusted(0)); assertFalse(MtuPolicy.trusted(23))
+        // A STATUS cut to 20 bytes by MTU 23 doesn't parse: that is the tell-tale; short events that parse are fine.
+        val status = "S|s13r1|ACTIVE|17|0|SmartCart-3F2A"
+        val cut = status.toByteArray().copyOf(MtuPolicy.DEFAULT_PAYLOAD).toString(Charsets.UTF_8)
+        assertNull(CartProtocol.status(cut))
+        assertTrue(MtuPolicy.truncated(cut.toByteArray().size, CartProtocol.status(cut) != null, trusted = false))
+        assertFalse("trusted MTU: never second-guessed", MtuPolicy.truncated(20, false, trusted = true))
+        val ev = "17|A|apple|93"
+        assertFalse(MtuPolicy.truncated(ev.toByteArray().size, CartProtocol.event(ev) != null, trusted = false))
+        val ev20 = "12|A|tennis racket|91".take(20)                     // cut: still parses, with confidence 9
+        assertNotNull(CartProtocol.event(ev20))
+        assertTrue("20 bytes on an unverified link is never trusted", MtuPolicy.truncated(ev20.toByteArray().size, true, false))
+        assertNull("a STATUS without its device name is cut", CartProtocol.status("S|s13r1|ACTIVE|17|0|"))
+        // Every phone → cart message fits one write even at the smallest MTU we accept.
+        assertTrue(CartProtocol.start("a".repeat(12), "b".repeat(32)).toByteArray().size <= CartProtocol.MIN_MTU - 3)
+    }
+
+    @Test fun walkOutSignalToBag() {
+        val r = Receipt(1, "SRF6WQ", "Bayside Grocer", 1118, 2, 0, "paid", "Visa •••• 4242", 0L, emptyList())
+        assertEquals("PAID SRF6WQ", walkOutSignal(r))
+        assertEquals("DUE SRF6WQ", walkOutSignal(r.copy(status = "payment_due", payment = "")))
+    }
 }
