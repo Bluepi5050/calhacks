@@ -3,3 +3,4 @@ build/
 local.properties
 app/build/
 *.apk
+app/google-services.json

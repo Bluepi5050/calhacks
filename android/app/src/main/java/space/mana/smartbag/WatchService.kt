@@ -33,6 +33,7 @@ class WatchService : Service() {
             Notify.status(this, "Bag It paused. Open the app to keep watching for your walk-out.")
             stopSelf(); return START_NOT_STICKY
         }
+        if (intent?.getStringExtra("reason") != null && !(application as SmartBagApp).foreground) shop.geoWoken = true
         shop.location.start()
         return START_STICKY
     }
@@ -44,8 +45,8 @@ class WatchService : Service() {
 
     companion object {
         fun stop(ctx: Context) { try { ctx.stopService(Intent(ctx, WatchService::class.java)) } catch (_: Exception) {} }
-        fun start(ctx: Context) {
-            val i = Intent(ctx, WatchService::class.java)
+        fun start(ctx: Context, reason: String? = null) {
+            val i = Intent(ctx, WatchService::class.java).apply { if (reason != null) putExtra("reason", reason) }
             try { if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i) } catch (_: Exception) {}
         }
     }

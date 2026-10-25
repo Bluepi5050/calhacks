@@ -54,9 +54,23 @@ data class AccountState(
     val firstName: String get() = name.trim().split(' ').firstOrNull().orEmpty()
 }
 const val DEMO_BAG = "DEMO"
+/** Server push state for this phone (module v5.1). [serverPush] = the database has an FCM project configured. */
+data class PushState(val serverPush: Boolean, val registered: Boolean, val prefs: String)
+/** SmartCart contract §5 (module v6). [remainingCents] may be negative (over budget). */
+data class SessionState(val sessionId: String, val storeId: String, val storeName: String, val active: Boolean, val lastSeq: Long,
+                        val budgetCents: Int, val spentCents: Int, val remainingCents: Long, val cart: CartState)
+data class HwEventResult(val status: String, val message: String, val state: SessionState)
+data class Recommendation(val sku: String, val name: String, val priceCents: Int, val reason: String)
+data class Recommendations(val source: String, val note: String, val items: List<Recommendation>)
+data class TripSummary(val receipt: Receipt, val sessionId: String, val startedMicros: Long, val endedMicros: Long, val eventCount: Int,
+                       val budgetCents: Int, val underBudgetCents: Long, val text: String)
+/** A store near the phone, for background geofences. */
+data class NearbyStore(val id: String, val name: String, val address: String, val lat: Double, val lng: Double, val radiusM: Int, val distanceM: Int)
 val SIGNED_OUT = AccountState(false, "", "", emptyList(), emptyList(), "")
 
-class ApiException(message: String) : Exception(message)
+open class ApiException(message: String) : Exception(message)
+/** The server answered with an error, or a reply this app can't read: retrying the same call won't help. */
+class ProcedureError(message: String) : ApiException(message)
 
 /** Procedure errors arrive as "The module instance encountered a fatal error: <message>"; the message is already shopper copy. */
 fun cleanError(raw: String?): String {
@@ -84,6 +98,8 @@ class Br(private val b: ByteArray, start: Int = 0) {
     fun u8() = buf.get().toInt() and 0xff
     fun u32() = buf.int
     fun i64() = buf.long
+    fun u64() = buf.long
+    fun f64() = buf.double
     fun bool() = u8() != 0
     fun raw(n: Int) = ByteArray(n).also { buf.get(it) }
     fun str() = String(raw(u32()))
@@ -180,7 +196,7 @@ object Api {
         r.i64(); r.i64()
         val id = r.u32()
         val d = pending.remove(id) ?: return
-        if (payload != null) d.complete(payload) else d.completeExceptionally(ApiException(cleanError(error)))
+        if (payload != null) d.complete(payload) else d.completeExceptionally(ProcedureError(cleanError(error)))
     }
 
     /** ClientMessage tag 4 = CallProcedure{requestId, flags, name, args}. */
@@ -207,8 +223,9 @@ object Api {
 
     // ---- codecs (internal for the codec tests; every decoder checks it consumed the whole payload)
     private fun <T> whole(b: ByteArray, f: (Br) -> T): T {
-        val r = Br(b); val v = f(r)
-        if (r.remaining != 0) throw ApiException("Bag It needs an update to read this reply.")
+        val r = Br(b)
+        val v = try { f(r) } catch (e: java.nio.BufferUnderflowException) { throw ProcedureError("Bag It needs an update to read this reply.") }
+        if (r.remaining != 0) throw ProcedureError("Bag It needs an update to read this reply.")
         return v
     }
     internal fun decodeAccount(b: ByteArray): AccountState = whole(b) { r ->
@@ -259,4 +276,39 @@ object Api {
     suspend fun bagRename(id: Long, name: String) = accountRaw("bag_rename", Bw().u64(id).str(name).done())
     suspend fun bagUnpair(id: Long) = accountRaw("bag_unpair", Bw().u64(id).done())
     suspend fun trips(limit: Int = 50): List<Receipt> = decodeTrips(call("shop_trips", Bw().u32(limit).done()))
+
+    // ---- SmartCart sessions, budget, corrections, recommendations, summary (contract v1.1 §5)
+    private fun session(r: Br) = SessionState(r.str(), r.str(), r.str(), r.bool(), r.u64(), r.u32(), r.u32(), r.i64(), state(r))
+    private fun rec(r: Br) = Recommendation(r.str(), r.str(), r.u32(), r.str())
+    internal fun decodeSession(b: ByteArray) = whole(b) { session(it) }
+    internal fun decodeHw(b: ByteArray) = whole(b) { r -> HwEventResult(r.str(), r.str(), session(r)) }
+    internal fun decodeRecs(b: ByteArray) = whole(b) { r -> Recommendations(r.str(), r.str(), List(r.u32()) { rec(r) }) }
+    internal fun decodeProducts(b: ByteArray) = whole(b) { r -> List(r.u32()) { rec(r) } }
+    internal fun decodeSummary(b: ByteArray) = whole(b) { r -> TripSummary(receiptAny(r), r.str(), r.i64(), r.i64(), r.u32(), r.u32(), r.i64(), r.str()) }
+    suspend fun sessionState() = decodeSession(call("shop_session_state", none))
+    suspend fun hwEvent(sid: String, seq: Long, action: String, label: String, confidence: Int) =
+        decodeHw(call("shop_hw_event", Bw().str(sid).u64(seq).str(action).str(label).u32(confidence).done()))
+    suspend fun setBudget(cents: Int) = decodeSession(call("shop_set_budget", Bw().u32(cents).done()))
+    suspend fun setQty(sku: String, qty: Int) = decodeSession(call("shop_set_qty", Bw().str(sku).u32(qty).done()))
+    suspend fun relabel(fromSku: String, toSku: String) = decodeSession(call("shop_relabel", Bw().str(fromSku).str(toSku).done()))
+    suspend fun recommend() = decodeRecs(call("shop_recommend", none))
+    suspend fun summary(orderId: Long = 0L) = decodeSummary(call("shop_summary", Bw().u64(orderId).done()))
+    suspend fun storeProducts() = decodeProducts(call("shop_store_products", none))
+    /** Backend issue 1 (not yet in the contract): same visit, new session id, lastSeq 0. */
+    suspend fun sessionRekey() = decodeSession(call("shop_session_rekey", none))
+
+    // ---- push + geofencing (module v5.1)
+    internal fun decodePush(b: ByteArray): PushState = whole(b) { r -> PushState(r.bool(), r.bool(), r.str()) }
+    internal fun decodeNearby(b: ByteArray): List<NearbyStore> = whole(b) { r ->
+        List(r.u32()) { NearbyStore(r.str(), r.str(), r.str(), r.f64(), r.f64(), r.u32(), r.u32()) }
+    }
+    internal fun decodeString(b: ByteArray): String = whole(b) { it.str() }
+    /** [prefs] = comma list of server categories ("trips,security"). Signed-in phones only. */
+    suspend fun pushRegister(token: String, prefs: String) = decodePush(call("push_register", Bw().str("android").str(token).str(prefs).done()))
+    suspend fun pushSetPrefs(prefs: String) = decodePush(call("push_set_prefs", Bw().str(prefs).done()))
+    suspend fun pushUnregister() = decodePush(call("push_unregister", none))
+    suspend fun pushStatus() = decodePush(call("push_status", none))
+    /** What the server did: "sent 1/1", "push not configured", "not registered", or an error. Never proof of delivery. */
+    suspend fun pushTest() = decodeString(call("push_test", none))
+    suspend fun nearbyStores(lat: Double, lng: Double, limit: Int = 20) = decodeNearby(call("shop_nearby_stores", Bw().f64(lat).f64(lng).u32(limit).done()))
 }

@@ -52,6 +52,12 @@ class CardsTest {
         assertEquals(listOf(Step.Pair, Step.Card), setupSteps(full.copy(cards = emptyList(), bags = emptyList()), ready, signUp = false))
         assertEquals(listOf(Step.Perms, Step.Pair, Step.Card), setupSteps(SIGNED_OUT.copy(signedIn = true), Perms(false, false, false, false), signUp = true))
     }
+    @Test fun pushCodecs() {
+        assertEquals(PushState(true, false, "trips"), Api.decodePush(Bw().bool(true).bool(false).str("trips").done()))
+        val n = Bw().u32(1).str("bayside-grocer").str("Bayside Grocer").str("201 Spear St").f64(37.7897).f64(-122.3972).u32(150).u32(12).done()
+        assertEquals(listOf(NearbyStore("bayside-grocer", "Bayside Grocer", "201 Spear St", 37.7897, -122.3972, 150, 12)), Api.decodeNearby(n))
+        assertEquals("push not configured", Api.decodeString(Bw().str("push not configured").done()))
+    }
     @Test fun accountCodec() {
         val a = AccountState(true, "Scott", "s@x.co", listOf(CardInfo(7, "Visa", "4242", 12, 2029, "Demo", true)),
             listOf(BagInfo(3, "SmartBag-3F2A", "Scott's bag", 1792878840000000L)), "Demo Visa •••• 4242")

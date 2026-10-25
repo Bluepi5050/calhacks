@@ -20,6 +20,13 @@ class MainActivity : ComponentActivity() {
     private val model: ShopModel get() = (application as SmartBagApp).shop
     private val prefs by lazy { getSharedPreferences("smartbag", 0) }
     private var perms by mutableStateOf(Perms(false, false, false, false))
+    private var notifSystem by mutableStateOf(true)
+
+    // Android 10+: "Allow all the time" is its own request, only after the foreground grant (11+ opens a settings page).
+    private val backgroundAsk = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+        refreshPerms(); if (perms.background) model.refreshGeofences()
+    }
+    private val notifAsk = registerForActivityResult(ActivityResultContracts.RequestPermission()) { refreshPerms() }
 
     private val signedIn get() = model.account?.signedIn == true
 
@@ -34,7 +41,7 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 33) permissions() + Manifest.permission.POST_NOTIFICATIONS else permissions()
     // Declined or not: connect() either connects or reports "Turn on Bluetooth…", so the bag never sits in Off.
     private val bluetoothAsk = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        if (model.pairing != null) model.startPairing() else model.link.connect()
+        if (model.pairing != null) model.startPairing() else model.connectAll()
     }
 
     private fun permissions(): Array<String> =
@@ -57,7 +64,9 @@ class MainActivity : ComponentActivity() {
             // After two denials Android stops showing the prompt; then only Settings can help.
             // (a dismissed dialog also clears the rationale flag, so allow at least two asks before sending people to Settings)
             canAskAgain = missing.isEmpty() || prefs.getInt("ask_count", 0) < 2 || missing.any { shouldShowRequestPermissionRationale(it) },
+            background = fine && (Build.VERSION.SDK_INT < 29 || has(Manifest.permission.ACCESS_BACKGROUND_LOCATION)),
         )
+        notifSystem = Notify.enabled(this)
     }
 
     private fun startLocation() {
@@ -68,10 +77,10 @@ class MainActivity : ComponentActivity() {
 
     private fun connectBag() {
         if (model.pairing != null) return            // the pairing screen owns Bluetooth right now
-        if (!model.link.hasBluetooth) { model.link.connect(); return }
+        if (!model.link.hasBluetooth) { model.connectAll(); return }
         if (!model.link.isEnabled) {
-            try { bluetoothAsk.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)) } catch (_: Exception) { model.link.connect() }
-        } else model.link.connect()
+            try { bluetoothAsk.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)) } catch (_: Exception) { model.connectAll() }
+        } else model.connectAll()
     }
 
     private fun appSettings() {
@@ -119,14 +128,56 @@ class MainActivity : ComponentActivity() {
         override fun pair(bleName: String, name: String, done: (String?) -> Unit) = model.pair(bleName, name, done)
         override fun pairDemo(done: (String?) -> Unit) = model.pairDemo(done)
         override fun endPairing() = model.endPairing()
+        override fun setNotif(k: NotifKind, on: Boolean) = model.setNotif(k, on)
+        override fun sendTest(done: (String) -> Unit) = model.sendTest(done)
+        override fun consumeOpenReceipt() { model.openReceipt = null }
+        override fun setQty(sku: String, qty: Int) { model.setQty(sku, qty) }
+        override fun dismissVisit() = model.dismissVisit()
+        override fun setBudget(cents: Int, done: (String?) -> Unit) { model.setBudget(cents, done) }
+        override fun storeProducts(done: (List<Recommendation>?, String?) -> Unit) { model.storeProducts(done) }
+        override fun relabel(from: String, to: String, done: (String?) -> Unit) { model.relabel(from, to, done) }
+        override fun simulateCart(on: Boolean) = model.simulateCart(on)
+        override fun hwStart() { model.session?.let { s -> model.hwWrite(CartProtocol.start(s.sessionId, s.storeId)) } ?: model.hwWrite("START|t${System.currentTimeMillis() % 100000}|test") }
+        override fun hwStop() { (model.cartSync.confirmed ?: model.cartSync.cart?.sid)?.let { model.hwWrite(CartProtocol.stop(it)) } }
+        override fun hwSync() = model.hwSync()
+        override fun simulate(action: String, label: String) = model.simulate(action, label)
+        override fun allowNotifications() {
+            // Android 13+: ask once in-app; after a denial (or below 13) only the app's notification settings can help.
+            if (Build.VERSION.SDK_INT >= 33 && !has(Manifest.permission.POST_NOTIFICATIONS) && !prefs.getBoolean("asked_notifications", false)) {
+                prefs.edit().putBoolean("asked_notifications", true).apply(); notifAsk.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else try {
+                startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
+            } catch (_: Exception) { appSettings() }
+        }
+        override fun allowBackground() {
+            if (!has(Manifest.permission.ACCESS_FINE_LOCATION)) { permissionAsk.launch(askList()); return }
+            if (Build.VERSION.SDK_INT >= 29 && !prefs.getBoolean("asked_background", false)) {
+                prefs.edit().putBoolean("asked_background", true).apply()
+                backgroundAsk.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            } else appSettings()          // Android won't show the prompt again: Settings › Location › Allow all the time
+        }
+    }
+
+    /** A notification was tapped: a receipt to open (local: open_receipt; server push: data code + type). */
+    private fun handle(intent: Intent?) {
+        val i = intent ?: return
+        val code = i.getStringExtra(Notify.EXTRA_RECEIPT)
+            ?: i.getStringExtra("code")?.takeIf { i.getStringExtra("type") in setOf("trip", "payment_due") }
+        if (!code.isNullOrBlank() && Geofences.signedIn(this)) model.openReceipt = code
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handle(intent)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         refreshPerms()
+        if (savedInstanceState == null) handle(intent)
         setContent {
-            BagItTheme { AppRoot(model.appUi(perms), actions) }
+            BagItTheme { AppRoot(model.appUi(perms, notifSystem), actions) }
         }
         if (perms.ready && signedIn && savedInstanceState == null) { startLocation(); connectBag() }
     }
@@ -140,7 +191,9 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         (application as SmartBagApp).foreground = true
         val wasReady = perms.ready
+        val wasBackground = perms.background
         refreshPerms()                         // the user may be back from Settings
+        if (perms.background && !wasBackground && signedIn) model.refreshGeofences()
         if (perms.ready && signedIn) {
             if (!wasReady) connectBag()
             if (model.location.enabled && model.store is StoreState.NoLocation) model.refreshStore()
@@ -153,12 +206,23 @@ class MainActivity : ComponentActivity() {
 fun ShopModel.ui(): ShopUi {
     val a = account?.takeIf { it.signedIn }
     return ShopUi(bag, store, payment, total, count, lines.toList(), paid, flash, syncError, lastTrip,
-        noBag = a != null && a.bags.isEmpty(), noCard = a != null && a.cards.isEmpty())
+        noBag = a != null && a.bags.isEmpty(), noCard = a != null && a.cards.isEmpty(),
+        budget = budgetCents, recs = recs?.items.orEmpty().take(3), summary = summary,
+        editable = hwBackend == true && store is StoreState.InStore)
 }
 
-fun ShopModel.appUi(perms: Perms) = AppUi(
+fun ShopModel.appUi(perms: Perms, notifSystem: Boolean = true) = AppUi(
     shop = ui(), account = account ?: SIGNED_OUT, perms = perms,
     trips = trips, tripsLoading = tripsLoading, tripsError = tripsError, pairing = pairing,
     connectedBag = (bag as? BagState.Connected)?.name?.takeIf { !demoStandIn }, version = BuildConfig.VERSION_NAME,
     demoActive = demoStandIn,
+    notif = notifVersion.let { notifPrefs.all() }, notifSystem = notifSystem, push = push, pushBuild = BuildConfig.FCM || PushHooks.available,
+    openReceipt = openReceipt, geofencesOk = geofencesOk,
+    hw = HwUi(
+        bag = when (val b = bag) { is BagState.Connected -> "connected ${b.name}"; is BagState.Connecting -> (if (b.retry) "reconnecting " else "connecting ") + b.name
+            is BagState.Problem -> b.message; BagState.Searching -> "searching"; BagState.Off -> "off" },
+        status = cartStatus, session = session?.let { "${it.sessionId} @ ${it.storeId}" + if (it.active) "" else " (ended)" },
+        confirmed = cartSync.confirmed, queued = cartSync.pending.size,
+        backend = when (hwBackend) { true -> "SmartCart procedures available"; false -> "not deployed yet"; null -> null },
+        last = lastHw?.let { it.status + if (it.message.isNotEmpty()) ": " + it.message else "" }, simulated = simulated, log = cartLog.toList()),
 )

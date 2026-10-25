@@ -67,12 +67,17 @@ class AccountFlowTest {
         assertEquals("bayside-grocer", s.storeId); assertEquals("Demo Visa •••• 4242", s.payment)
         Api.bagLine("+1005@A$t"); s = Api.bagLine("+1008@B$t")
         assertEquals(469 + 649, s.totalCents)
+        // v5.2: account changes are refused mid-trip with plain-language copy, and nothing changes.
+        expectError("middle of a trip") { Api.signOut() }
+        assertTrue(Api.accountState().first.signedIn); assertEquals(2, Api.current().itemCount)
         val stateRaw = Api.call("shop_state", ByteArray(0))
         assertEquals(s.totalCents, Api.decodeState(stateRaw).totalCents)
         Api.locate(north(270.0), bayLng, 8f)
         s = Api.locate(north(300.0), bayLng, 8f)
         val r = s.lastReceipt!!
-        assertEquals("", s.storeId); assertEquals("paid", r.status); assertEquals("Demo Visa •••• 4242", r.payment); assertEquals(469 + 649, r.total)
+        assertEquals("", s.storeId); assertEquals("paid", r.status); assertEquals(469 + 649, r.total)
+        // v5.2: receipts carry "Brand •••• last4" without the nickname; CartState.payment keeps the full label.
+        assertEquals("Visa •••• 4242", r.payment)
 
         val tripsRaw = Api.call("shop_trips", Bw().u32(20).done())
         val trips = Api.decodeTrips(tripsRaw)
@@ -97,6 +102,7 @@ class AccountFlowTest {
         expectError("Email or password is wrong") { Api.signIn(email, "wrong password") }
 
         a = Api.signIn(email.uppercase(), pw).first
+        Api.setBag(bag); assertEquals(bag, Api.current().bag)          // the app re-sends shop_set_bag after sign-in
         assertTrue(a.signedIn); assertEquals(1, a.cards.size); assertEquals(1, a.bags.size)
         assertEquals("Demo Visa •••• 4242", Api.current().payment)
         assertTrue(Api.trips(5).any { it.id == r.id })

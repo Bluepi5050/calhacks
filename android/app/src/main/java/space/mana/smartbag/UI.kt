@@ -336,6 +336,7 @@ internal fun EdgeLine(fill: Float, color: Color) {
 data class Perms(
     val nearby: Boolean, val location: Boolean, val notifications: Boolean, val asked: Boolean,
     val approximate: Boolean = false, val canAskAgain: Boolean = true,
+    val background: Boolean = false,       // "Allow all the time" (geofences wake Bag It while it's closed)
 ) {
     val ready get() = nearby && location
 }
@@ -434,6 +435,11 @@ data class ShopUi(
     val lastTrip: Receipt? = null,
     val noBag: Boolean = false,          // signed in with no paired bag: the chip and the dock ask to pair one
     val noCard: Boolean = false,         // empty wallet: walk-outs would be payment due
+    val budget: Int = 0,                 // cents per trip, 0 = none (3.4)
+    val recs: List<Recommendation> = emptyList(),
+    val summary: TripSummary? = null,    // backend trip summary for the receipt on screen
+    val editable: Boolean = false,       // in a store with SmartCart procedures: rows can be corrected
+    val editingPreview: String? = null,  // renders only: a row shown with its correction strip open
 )
 
 interface ShopActions {
@@ -448,6 +454,10 @@ interface ShopActions {
     fun openAddCard() {}
     /** The dock's "Paying with <card>" line: the card picker sheet. */
     fun chooseCard() {}
+    fun openBudget() {}
+    fun setQty(sku: String, qty: Int) {}
+    fun changeItem(line: Line) {}
+    fun dismissVisit() {}
 }
 
 private val BagState.connected get() = this is BagState.Connected
@@ -494,7 +504,7 @@ fun ShopScreen(s: ShopUi, a: ShopActions, bottomInset: Dp = 0.dp, onFullScreen: 
             val bar = with(density) { barBody[0].toDp() }
             CompositionLocalProvider(LocalNavPad provides true) {
                 ReceiptScreen(t.first, peak = t.second, onDone = done, minBar = if (t.second) bar + bottomInset else 0.dp,
-                    settleBar = if (t.second) bar + (if (navPadOff) navBottom else 0.dp) else null)
+                    settleBar = if (t.second) bar + (if (navPadOff) navBottom else 0.dp) else null, tripSummary = s.summary)
             }
         } else Box(Modifier.fillMaxSize().padding(bottom = bottomInset)) {
             ShopBody(if (live != null) frozen[0] ?: s else s, a, onLastTrip = { reviewing = it }, onBar = { if (live == null) barBody[0] = it })
@@ -516,6 +526,15 @@ private fun ShopBody(s: ShopUi, a: ShopActions, onLastTrip: (Long) -> Unit, onBa
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
             Spacer(Modifier.height(16.dp))
             StoreBlock(s, a)
+            // A visit that ended with nothing to pay for still gets its summary (no receipt to put it on).
+            s.summary?.takeIf { it.receipt.id == 0L && s.store is StoreState.Away && s.paid == null }?.let { v ->
+                Spacer(Modifier.height(16.dp))
+                Row(Modifier.padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Txt(v.text, Type.caption, LocalPalette.current.muted, modifier = Modifier.weight(1f))
+                    Spacer(Modifier.width(12.dp))
+                    SmallPill("Dismiss", "Hide this visit summary") { a.dismissVisit() }
+                }
+            }
             PlaceRows(s, onLastTrip)
             if (big && status) {
                 Spacer(Modifier.height(24.dp))
@@ -541,13 +560,15 @@ private fun Header(b: BagState, a: ShopActions, pair: Boolean = false) {
     val p = LocalPalette.current
     val haptic = LocalHapticFeedback.current
     val canConnect = !b.connected && !b.busy || pair
+    val cartName = when (b) { is BagState.Connected -> b.name; is BagState.Connecting -> b.name; else -> "" }
+    val noun = if (CartProtocol.isCartName(cartName)) "Cart" else "Bag"
     val label = when {
         pair -> "Pair your bag"
         else -> when (b) {
-        is BagState.Connected -> "Bag connected"
-        is BagState.Connecting -> "Connecting…"
+        is BagState.Connected -> "$noun connected"
+        is BagState.Connecting -> if (b.retry) "Reconnecting…" else "Connecting…"
         BagState.Searching, BagState.Off -> "Looking for your bag…"
-        else -> "Bag not connected"
+        else -> "$noun not connected"
         }
     }
     val connectNow = { if (pair) a.openPairing() else a.connectBag() }
@@ -755,18 +776,24 @@ private fun BagBlock(s: ShopUi, a: ShopActions) {
         }
         return
     }
+    var editing by remember { mutableStateOf(s.editingPreview) }
     s.lines.forEach { l ->
-        key(l.sku) { LineRow(l, inStore, s.flash, s.total, a) }
+        key(l.sku) {
+            val canEdit = s.editable && inStore != null && !inStore.leaving
+            LineRow(l, inStore, s.flash, s.total, a, onTap = if (canEdit) ({ editing = if (editing == l.sku) null else l.sku }) else null)
+            if (canEdit && editing == l.sku) LineEditStrip(l, onQty = { q -> a.setQty(l.sku, maxOf(0, q)); if (q <= 0) editing = null }, onChange = { a.changeItem(l) })
+        }
         Hairline(Modifier.padding(horizontal = 24.dp))
     }
     if (inStore != null && unsold > 0) {
         Spacer(Modifier.height(12.dp))
         Txt("Items ${inStore.name} doesn't sell won't be charged.", Type.caption, p.faint, modifier = Modifier.padding(horizontal = 24.dp))
     }
+    if (inStore != null && !inStore.leaving) RecsBlock(s.recs)
 }
 
 @Composable
-private fun LineRow(l: Line, inStore: StoreState.InStore?, flash: Pair<String, Int>?, total: Int, a: ShopActions) {
+private fun LineRow(l: Line, inStore: StoreState.InStore?, flash: Pair<String, Int>?, total: Int, a: ShopActions, onTap: (() -> Unit)? = null) {
     val p = LocalPalette.current
     val reduce = LocalReduceMotion.current
     val view = LocalView.current
@@ -793,6 +820,7 @@ private fun LineRow(l: Line, inStore: StoreState.InStore?, flash: Pair<String, I
     }
     Row(
         Modifier.fillMaxWidth().background(p.coral.copy(alpha = (if (p.dark) 0.20f else 0.12f) * glow.value)).heightIn(min = 64.dp)
+            .then(if (onTap != null) Modifier.clickable(role = Role.Button, onClickLabel = "Correct this item", onClick = onTap) else Modifier)
             .padding(horizontal = 24.dp, vertical = 12.dp)
             .semantics(mergeDescendants = true) {
                 contentDescription = name + ", " + (if (l.sold) "${l.qty} at ${money(l.priceCents)}, ${money(l.lineCents)}" else sub.replace(" · ", ", "))
@@ -837,7 +865,9 @@ private fun ShopStatus(s: ShopUi, a: ShopActions) {
         }
         if (s.bag.busy && s.bag != BagState.Off && !s.leaving && !s.needsPairing) {
             if (inStore != null || s.count > 0) Spacer(Modifier.height(12.dp))
-            Txt("Looking for your bag. Keep it nearby and switched on.", Type.caption, p.muted, balanced = true)
+            val cartBusy = (s.bag as? BagState.Connecting)?.name?.let(CartProtocol::isCartName) == true
+            Txt(if (cartBusy) "Reconnecting to your cart. Keep it nearby and switched on." else "Looking for your bag. Keep it nearby and switched on.",
+                Type.caption, p.muted, balanced = true)
         }
     }
     if (s.syncError != null && s.store !is StoreState.Offline) {
@@ -877,7 +907,7 @@ private fun WalkOutStatus(s: ShopUi, st: StoreState.InStore, pay: String, a: Sho
         val due = "No card on file. If you leave now, you'll pay at the store."
         when {
             st.leaving -> TotalRow("On your way out", s.total, due, p.bad)
-            s.count > 0 -> TotalRow("Bag total", s.total, due, p.bad)
+            s.count > 0 -> { TotalRow("Bag total", s.total, due, p.bad); BudgetLine(s.budget, s.total, a::openBudget) }
             else -> {
                 Txt("Fill your bag, then just walk out", Type.title, bold = true, modifier = Modifier.semantics { heading() })
                 Spacer(Modifier.height(4.dp))
@@ -890,7 +920,7 @@ private fun WalkOutStatus(s: ShopUi, st: StoreState.InStore, pay: String, a: Sho
     val pick = a::chooseCard
     when {
         st.leaving -> TotalRow("On your way out", s.total, "We'll charge ${card(pay)} in a moment. Step back inside to keep shopping.", onSub = pick)
-        s.count > 0 -> TotalRow("Just walk out", s.total, "We'll charge ${card(pay)} when you leave ${st.name}.", onSub = pick)
+        s.count > 0 -> { TotalRow("Just walk out", s.total, "We'll charge ${card(pay)} when you leave ${st.name}.", onSub = pick); BudgetLine(s.budget, s.total, a::openBudget) }
         else -> Column(
             Modifier.fillMaxWidth().clickable(role = Role.Button, onClickLabel = "Change card", onClick = pick)
                 .semantics(mergeDescendants = true) { },
@@ -948,7 +978,7 @@ fun qr(text: String, size: Int = 360, ink: Int = 0xFF18181B.toInt()): ImageBitma
  * [peak] = this receipt was just charged (play the moment once); false = reopened from "Last trip" (end state, quiet).
  */
 @Composable
-fun ReceiptScreen(r: Receipt, peak: Boolean, onDone: () -> Unit, minBar: Dp = 0.dp, settleBar: Dp? = null) {
+fun ReceiptScreen(r: Receipt, peak: Boolean, onDone: () -> Unit, minBar: Dp = 0.dp, settleBar: Dp? = null, tripSummary: TripSummary? = null) {
     val p = LocalPalette.current
     val reduce = LocalReduceMotion.current
     val view = LocalView.current
@@ -968,7 +998,7 @@ fun ReceiptScreen(r: Receipt, peak: Boolean, onDone: () -> Unit, minBar: Dp = 0.
         else "Paid ${money(r.total)} as you left ${r.storeName}.") + " $time." + (if (r.payment.isNotEmpty()) " ${r.payment}." else "") + " Exit code ${r.code.toCharArray().joinToString(" ")}."
     LaunchedEffect(r.id) {
         if (!peak || played) return@LaunchedEffect
-        Notify.cancelPaid(ctx)
+        Notify.cancelReceipt(ctx, r.code)
         view.announceForAccessibility(summary)
         if (!reduce) {
             delay(300)                                                  // let the cross-fade land, so the line is seen completing
@@ -1044,6 +1074,7 @@ fun ReceiptScreen(r: Receipt, peak: Boolean, onDone: () -> Unit, minBar: Dp = 0.
                 Txt(money(r.total), Type.body, bold = true, num = true)
             }
             if (r.unpriced > 0) Txt("${items(r.unpriced)} not sold there, not charged.", Type.caption, p.faint)
+            tripSummary?.takeIf { it.receipt.id == r.id }?.let { Spacer(Modifier.height(32.dp)); TripSummaryBlock(it) }
             Spacer(Modifier.height(32.dp))
             Txt(if (due) "Keep this code handy on your way out. It stays under Last trip."
                 else "Thanks for shopping at ${r.storeName}. Your bag is ready for next time.", Type.body, p.muted, balanced = true)
