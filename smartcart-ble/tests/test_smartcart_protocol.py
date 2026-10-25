@@ -1,4 +1,4 @@
-"""SmartCart BLE contract v1.1: message encoding/decoding (pure, no Bluetooth)."""
+"""SmartCart BLE contract v1.2: message encoding/decoding (pure, no Bluetooth)."""
 import enum
 import unittest
 

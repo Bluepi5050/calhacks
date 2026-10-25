@@ -243,7 +243,8 @@ class SmartCartBLE:
                  on_session_start: Optional[Callable[[str, str, bool], None]] = None,
                  on_session_stop: Optional[Callable[[str, str], None]] = None,
                  strict: bool = False, object_path: str = "/org/smartcart",
-                 state_file=_DEFAULT, clock: Callable[[], float] = time.monotonic):
+                 state_file=_DEFAULT, disconnect_on_start: bool = True,
+                 clock: Callable[[], float] = time.monotonic):
         if name is not None and not p.valid_device_name(name):
             raise ValueError(f"name must be 1-{p.MAX_DEVICE_NAME} printable chars without '|'")
         self._adapter_hint = adapter
@@ -252,6 +253,9 @@ class SmartCartBLE:
         self._stale_after = stale_after
         self._buffer_size = buffer_size
         self._readvertise = readvertise_on_disconnect
+        # contract v1.2: a cart (re)start must look like a disconnect to the phone
+        self._disconnect_on_start = disconnect_on_start
+        self._stale_links: set = set()
         self._strict = strict
         self._root = object_path.rstrip("/")
         self._clock = clock
@@ -453,10 +457,12 @@ class SmartCartBLE:
             except dbus.exceptions.DBusException as exc:
                 log.warning("could not set adapter alias to %s (%s); phones may show another name",
                             self.name, _explain(exc))
+        self._stale_links = set()
         for dev_path, ifaces in objs.items():
             dev = ifaces.get(DEVICE)
             if dev and str(dev_path).startswith(path + "/") and bool(dev.get("Connected", False)):
                 self._connected.add(str(dev_path))
+                self._stale_links.add(str(dev_path))      # connected before this registration
         log.info("adapter %s (%s), advertising as %s", path, self.address, self.name)
 
     def _export_objects(self):
@@ -484,6 +490,7 @@ class SmartCartBLE:
     def _on_app_registered(self):
         self.gatt_registered = True
         self._rereg_attempt = 0
+        self._disconnect_stale_links()
         log.info("GATT service %s registered", p.SERVICE_UUID)
         self._ready.set()
         self._adv_attempt = 0
@@ -514,6 +521,22 @@ class SmartCartBLE:
             log.warning("BlueZ not ready yet (%s)", exc if isinstance(exc, SmartCartError) else _explain(exc))
             self._schedule_reregister()
         return False
+
+    def _disconnect_stale_links(self):
+        """Contract v1.2 section 3: at startup and after re-registering, drop links that predate this
+        registration, so the phone runs its reconnect + reconcile (its subscriptions to the old GATT
+        objects are gone). Devices that connect after registration are left alone."""
+        links, self._stale_links = self._stale_links, set()
+        if not self._disconnect_on_start:
+            return
+        for path in sorted(links):
+            log.info("disconnecting %s (connected before this cart registered) so the phone reconnects", path)
+            try:
+                dbus.Interface(self._bus.get_object(BLUEZ, path), DEVICE).Disconnect(
+                    reply_handler=lambda: None,
+                    error_handler=lambda e, path=path: log.warning("could not disconnect %s: %s", path, _explain(e)))
+            except dbus.exceptions.DBusException as exc:
+                log.warning("could not disconnect %s: %s", path, _explain(exc))
 
     def _register_adv(self):
         if self._stopping or self._bus is None:

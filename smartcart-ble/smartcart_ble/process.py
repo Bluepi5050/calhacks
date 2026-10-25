@@ -21,7 +21,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional  # noqa: F401
 
 from . import protocol as p
 
@@ -38,7 +38,14 @@ def _status_dict(st: Optional[p.Status]):
 
 
 class SmartCartProcess:
-    """Drop-in for SmartCartBLE that runs it in `python -m <package>.process`."""
+    """Drop-in for SmartCartBLE that runs it in `python -m <package>.process`.
+
+    If the child dies while running, it is started again (backoff 1, 2, 5, 10, 30 s). The new child
+    disconnects links that predate it (contract v1.2), so the phone reconnects, sends START and the
+    cart continues numbering that session from its state file. While the child is down, `active` is
+    False and publish() returns None."""
+
+    RESPAWN_S = (1, 2, 5, 10, 30)
 
     def __init__(self, **kwargs):
         self._kwargs = {k: v for k, v in kwargs.items() if v is not None or k == "state_file"}
@@ -48,15 +55,17 @@ class SmartCartProcess:
             fn = self._kwargs.pop(key, None)
             if fn:
                 lst.append(fn)
+        self.respawn = bool(self._kwargs.pop("respawn", True))
         self._proc: Optional[subprocess.Popen] = None
         self._lock = threading.Lock()
         self._cond = threading.Condition(self._lock)
         self._replies = {}
         self._next_id = 0
-        self._ready = threading.Event()
-        self._error: Optional[str] = None
         self._status: Optional[p.Status] = None
         self._alive = False
+        self._stopping = False
+        self._started = False
+        self.restarts = 0
         self.name: Optional[str] = None
 
     def add_session_start_listener(self, fn):
@@ -65,32 +74,82 @@ class SmartCartProcess:
     def add_session_stop_listener(self, fn):
         self._stop_listeners.append(fn)
 
+    @property
+    def pid(self) -> Optional[int]:
+        proc = self._proc
+        return proc.pid if proc is not None else None
+
     # -- lifecycle ------------------------------------------------------------------------------
     def start(self, timeout: float = 25.0) -> "SmartCartProcess":
-        if self._proc is not None:
+        if self._started:
             return self
         from .peripheral_errors import SmartCartError
+        self._stopping = False
+        err = self._spawn(timeout)
+        if err:
+            self.stop()
+            raise SmartCartError(err)
+        self._started = True
+        return self
+
+    def _spawn(self, timeout: float) -> Optional[str]:
+        """Start one child and wait for ready. Returns an error message, or None on success."""
         pkg = __name__.rsplit(".", 1)[0]
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         for _ in pkg.split(".")[1:]:
             root = os.path.dirname(root)
         env = dict(os.environ, PYTHONUNBUFFERED="1")
         env["PYTHONPATH"] = root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
-        self._proc = subprocess.Popen([sys.executable, "-m", pkg + ".process", json.dumps(self._kwargs)],
-                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None,
-                                      text=True, bufsize=1, env=env)
-        self._alive = True
-        threading.Thread(target=self._reader, name="smartcart-ble-reader", daemon=True).start()
-        if not self._ready.wait(timeout):
-            self.stop()
-            raise SmartCartError("Bluetooth process did not start within %.0f s" % timeout)
-        if self._error:
-            self.stop()
-            raise SmartCartError(self._error)
-        return self
+        proc = subprocess.Popen([sys.executable, "-m", pkg + ".process", json.dumps(self._kwargs)],
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None,
+                                text=True, bufsize=1, env=env)
+        ready = {"event": threading.Event(), "error": None}
+        with self._cond:
+            self._proc = proc
+            self._status = None
+        threading.Thread(target=self._reader, args=(proc, ready), name="smartcart-ble-reader", daemon=True).start()
+        if not ready["event"].wait(timeout):
+            self._kill(proc)
+            return "Bluetooth process did not start within %.0f s" % timeout
+        if ready["error"]:
+            self._kill(proc)
+            return ready["error"]
+        with self._cond:
+            self._alive = proc is self._proc
+        return None
+
+    def _respawn_loop(self):
+        attempt = 0
+        while not self._stopping:
+            delay = self.RESPAWN_S[min(attempt, len(self.RESPAWN_S) - 1)]
+            log.warning("restarting the Bluetooth process in %d s", delay)
+            time.sleep(delay)
+            if self._stopping:
+                return
+            err = self._spawn(25.0)
+            if err is None:
+                self.restarts += 1
+                log.warning("Bluetooth process restarted (%d so far)", self.restarts)
+                return
+            log.error("Bluetooth restart failed: %s", err)
+            attempt += 1
+
+    @staticmethod
+    def _kill(proc):
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(2)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
     def stop(self, timeout: float = 6.0) -> None:
-        proc, self._proc = self._proc, None
+        self._stopping = True
+        with self._cond:
+            proc, self._proc = self._proc, None
+            self._alive = False
+            self._cond.notify_all()
+        self._started = False
         if proc is None:
             return
         try:
@@ -100,13 +159,7 @@ class SmartCartProcess:
                 proc.wait(timeout)
         except Exception:
             pass
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(2)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-        self._alive = False
+        self._kill(proc)
 
     def __enter__(self):
         return self.start()
@@ -132,21 +185,21 @@ class SmartCartProcess:
             log.error("event not sent: %s", exc)
             return None
         with self._cond:
-            if not self._alive or self._proc is None:
+            proc = self._proc
+            if not self._alive or proc is None:
                 log.error("Bluetooth process is not running: %s %s not sent", act, lab)
                 return None
             self._next_id += 1
             rid = self._next_id
             try:
-                self._proc.stdin.write(json.dumps({"op": "publish", "id": rid, "action": act, "label": lab,
-                                                   "confidence": conf}) + "\n")
-                self._proc.stdin.flush()
+                proc.stdin.write(json.dumps({"op": "publish", "id": rid, "action": act, "label": lab,
+                                             "confidence": conf}) + "\n")
+                proc.stdin.flush()
             except (BrokenPipeError, OSError, ValueError):
-                self._alive = False
                 log.error("Bluetooth process is gone: %s %s not sent", act, lab)
                 return None
             end = time.monotonic() + PUBLISH_TIMEOUT_S
-            while rid not in self._replies and self._alive:
+            while rid not in self._replies and self._alive and self._proc is proc:
                 left = end - time.monotonic()
                 if left <= 0:
                     log.error("Bluetooth process did not answer publish %d in time", rid)
@@ -155,8 +208,7 @@ class SmartCartProcess:
             return self._replies.pop(rid, None)
 
     # -- child -> parent ------------------------------------------------------------------------
-    def _reader(self):
-        proc = self._proc
+    def _reader(self, proc, ready):
         for line in proc.stdout:
             try:
                 msg = json.loads(line)
@@ -165,6 +217,8 @@ class SmartCartProcess:
             ev = msg.get("ev")
             st = msg.get("status")
             with self._cond:
+                if proc is not self._proc:
+                    continue
                 if st is not None:
                     self._status = p.Status(st["sid"], st["state"], st["last_seq"], st["unacked"], st["device_name"])
                 if ev == "seq":
@@ -172,10 +226,10 @@ class SmartCartProcess:
                 self._cond.notify_all()
             if ev == "ready":
                 self.name = msg.get("name")
-                self._ready.set()
+                ready["event"].set()
             elif ev == "error":
-                self._error = msg.get("message", "Bluetooth failed")
-                self._ready.set()
+                ready["error"] = msg.get("message", "Bluetooth failed")
+                ready["event"].set()
             elif ev in ("start", "stop"):
                 fns = self._start_listeners if ev == "start" else self._stop_listeners
                 for fn in list(fns):
@@ -186,14 +240,28 @@ class SmartCartProcess:
                             fn(msg["sid"], msg["reason"])
                     except Exception:
                         log.exception("session %s listener failed", ev)
+        proc.wait()
         with self._cond:
-            self._alive = False
+            current = proc is self._proc
+            last_sid = (self._status.sid if self._status else None) or ""
+            if current:
+                self._alive = False
+                self._status = None
             self._cond.notify_all()
-        if not self._ready.is_set():
-            self._error = self._error or "Bluetooth process exited during start (see log above)"
-            self._ready.set()
-        elif self._proc is not None:
-            log.error("Bluetooth process exited unexpectedly (code %s): events are no longer sent", proc.poll())
+        if not ready["event"].is_set():
+            ready["error"] = ready["error"] or "Bluetooth process exited during start (see log above)"
+            ready["event"].set()
+            return
+        if current and not self._stopping:
+            log.error("Bluetooth process exited unexpectedly (code %s): events are not sent until it restarts",
+                      proc.returncode)
+            for fn in list(self._stop_listeners):
+                try:
+                    fn(last_sid, "crash")
+                except Exception:
+                    pass
+            if self.respawn:
+                threading.Thread(target=self._respawn_loop, name="smartcart-ble-respawn", daemon=True).start()
 
 
 # ---- child side ---------------------------------------------------------------------------------

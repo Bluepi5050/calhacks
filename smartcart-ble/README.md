@@ -1,6 +1,6 @@
 # smartcart-ble
 
-The Jetson side of the SmartCart ↔ Bag It Bluetooth contract ([`smartcart_ble/SMARTCART-BLE.md`](smartcart_ble/SMARTCART-BLE.md), v1.1), as a self-contained Python 3.10 package with no pip dependencies (BlueZ over D-Bus via `python3-dbus` + `python3-gi`).
+The Jetson side of the SmartCart ↔ Bag It Bluetooth contract ([`smartcart_ble/SMARTCART-BLE.md`](smartcart_ble/SMARTCART-BLE.md), v1.2), as a self-contained Python 3.10 package with no pip dependencies (BlueZ over D-Bus via `python3-dbus` + `python3-gi`).
 
 * **Wired into the scanner**: the same package lives at `hardware/smartcart_ble/` on branch [`ble-transport`](https://github.com/Bluepi5050/calhacks/tree/ble-transport) of Bluepi5050/calhacks, with `--transport ble | ble+console` in `hardware/main.py` and `hardware/main_tensorrt.py`. Start there; its [README](smartcart_ble/README.md) is written for the teammate (commands use `hardware.smartcart_ble`).
 * **Standalone** (this folder): the package imports as `smartcart_ble`, so the same commands are
