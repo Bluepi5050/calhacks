@@ -24,13 +24,21 @@ if code:
     if "not enabled" in out: sys.exit("SpacetimeAuth is not enabled yet for " + DB + ": enable it on the dashboard first.")
     code, out = sh("auth", "client", "create", DB, "--name", NAME)
 print(out)
-m = re.search(r'client[_ ]?id["\s:=]+([A-Za-z0-9_\-]{6,})', out, re.I)
-if not m: sys.exit("Could not read the client id from the output above; set it manually.")
-client_id = m.group(1)
+client_id = ""
+try:                                   # CLI prints {"success": true, "data": {"id": "client_...", ...}}
+    j = json.loads(out[out.index("{"):])
+    client_id = str((j.get("data") or {}).get("id") or "")
+except Exception:
+    pass
+if not client_id:
+    m = re.search(r'"id"\s*:\s*"(client_[A-Za-z0-9_\-]+)"', out) or re.search(r'client[_ ]?id["\s:=]+([A-Za-z0-9_\-]{6,})', out, re.I)
+    client_id = m.group(1) if m else ""
+if not client_id: sys.exit("Could not read the client id from the output above; set it manually.")
 sh("auth", "client", "set", DB, "web", "true", "--name", NAME, ok=True)
 sh("auth", "client", "set", DB, "redirect_uris", URIS, "--name", NAME)
 sh("auth", "client", "set", DB, "post_logout_redirect_uris", URIS, "--name", NAME)
 sh("auth", "config", "set", DB, "login.email", "true")
+sh("auth", "config", "set", DB, "login.anonymous", "false", ok=True)   # email magic link only
 sh("auth", "config", "set", DB, "display_name", "SmartBag")
 sh("auth", "config", "set", DB, "color.primary", "#E8654A", ok=True)
 sh("call", DB, "set_auth_clients", json.dumps(client_id))
