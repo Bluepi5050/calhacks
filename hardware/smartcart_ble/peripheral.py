@@ -43,6 +43,7 @@ ADVERTISEMENT = "org.bluez.LEAdvertisement1"
 
 TICK_S = 5
 ADV_RETRY_S = (5, 10, 20, 30)          # backoff while advertising keeps failing
+ADAPTER_RESET_MIN_S = 60                # at most one adapter power cycle per minute (advertising stuck)
 READVERTISE_DELAY_MS = 1500
 DEFAULT_STATE_FILE = os.environ.get("SMARTCART_STATE_FILE") or os.path.expanduser(
     "~/.local/state/smartcart-ble/sessions.json")
@@ -289,6 +290,7 @@ class SmartCartBLE:
         self.advertising = False
         self._adv_attempt = 0
         self._adv_retry = None                     # GLib source id of the one pending advertising retry
+        self._last_adapter_reset = None            # clock() of the last power cycle (see _reset_adapter)
         self._adv_gen = 0
         self._bluez_owner = None
 
@@ -592,10 +594,39 @@ class SmartCartBLE:
         if self._connected_devices():
             log.info("advertising paused while a phone is connected; it resumes when the phone disconnects")
             return
+        # Second failure in a row with nothing connected: usually the kernel answers "Busy" (a scan or another
+        # advertiser left the controller mid-operation). A power cycle clears it; at most once a minute.
+        if self._adv_attempt >= 1 and (self._last_adapter_reset is None
+                                       or self._clock() - self._last_adapter_reset >= ADAPTER_RESET_MIN_S):
+            self._reset_adapter(exc)
+            return
         delay = ADV_RETRY_S[min(self._adv_attempt, len(ADV_RETRY_S) - 1)]
         self._adv_attempt += 1
         log.error("advertising failed (%s); retrying in %d s", _explain(exc), delay)
         self._schedule_adv_retry(delay)
+
+    def _reset_adapter(self, exc):
+        """Power the adapter off and on, then advertise again. BlueZ keeps our GATT app and advertisement
+        registered across it; only links (none, checked by the caller) and other clients' scans are dropped."""
+        self._last_adapter_reset = self._clock()
+        self._adv_attempt += 1
+        log.warning("advertising keeps failing (%s) with no phone connected: turning the Bluetooth adapter "
+                    "off and on to clear it", _explain(exc))
+        props = dbus.Interface(self._bus.get_object(BLUEZ, self.adapter_path), PROPS)
+
+        def power(on):
+            try:
+                props.Set(ADAPTER, "Powered", dbus.Boolean(on))
+            except dbus.exceptions.DBusException as e:
+                log.warning("could not power the adapter %s: %s", "on" if on else "off", _explain(e))
+
+        def back_on():
+            if not self._stopping:
+                power(True)
+                self._schedule_adv_retry(1)
+            return False
+        power(False)
+        GLib.timeout_add(1500, back_on)
 
     def _on_adv_released(self):
         self.advertising = False
