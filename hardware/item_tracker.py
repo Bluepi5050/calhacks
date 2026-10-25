@@ -76,7 +76,8 @@ class TrackedObject:
             self.velocity_y = 0.5 * self.velocity_y + 0.5 * measured_velocity
         self.position_history.append((timestamp, current_x, current_y))
         del self.position_history[:-6]
-        self.recovered_after_gap = self.missed_frames > 0
+        self.recovered_after_gap = (self.missed_frames > 0
+                                    or association_note.startswith("recovered"))
         self.reassociation_confidence = association_confidence
         self.association_note = association_note
         self.identity_uncertain = False
@@ -132,7 +133,7 @@ class ItemTracker:
                  max_centroid_distance=0.14, centroid_smoothing=0.5,
                  maximum_reacquisition_distance=0.65,
                  maximum_reacquisition_horizontal_distance=0.15,
-                 maximum_vertical_speed=1.5, maximum_box_size_ratio=2.0,
+                 maximum_vertical_speed=1.5, maximum_box_size_ratio=3.0,
                  reassociation_min_confidence=0.55,
                  association_ambiguity_margin=0.12):
         if max_missed_seconds < 0:
@@ -232,8 +233,10 @@ class ItemTracker:
                                                track.velocity_y)) * gap))
         prediction_cost = min(abs(new_y - predicted_y) / max(y_limit, 1e-9), 1.0)
         age_cost = min(gap / max(self.max_missed_seconds, 1e-9), 1.0)
-        cost = (0.35 * dx / x_limit + 0.25 * abs(dy) / max(y_limit, 1e-9)
-                + 0.20 * size_cost + 0.10 * prediction_cost + 0.10 * age_cost)
+        # Vertical travel, size change, and even a direction reversal can happen
+        # around the opening. Horizontal consistency carries the most weight.
+        cost = (0.40 * dx / x_limit + 0.10 * abs(dy) / max(y_limit, 1e-9)
+                + 0.12 * size_cost + 0.08 * prediction_cost + 0.10 * age_cost)
         confidence = max(0.0, 1.0 - cost)
         if confidence < self.reassociation_min_confidence:
             return None, "reassociation confidence {:.2f} below {:.2f}".format(
@@ -317,7 +320,7 @@ class ItemTracker:
 
         recovery_pairs = []
         for track_id, track in self.tracks.items():
-            if not track.missed_frames or track_id in assigned_tracks:
+            if track_id in assigned_tracks or track.identity_uncertain:
                 continue
             for index, detection in enumerate(detections):
                 if index in assigned_detections or index in uncertain_detections:
