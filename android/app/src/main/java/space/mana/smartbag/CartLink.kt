@@ -64,8 +64,44 @@ class CartLink(
 
     private val ops = GattQueue(::exec, log)
     private val opTimeout = Runnable {
-        fail(if ((ops.current as? GattOp.Read)?.heartbeat == true) "cart stopped answering" else "GATT ${ops.current} timed out")
+        when {
+            ops.current == GattOp.Mtu -> mtuNoAnswer("timed out")
+            (ops.current as? GattOp.Read)?.heartbeat == true -> fail("cart stopped answering")
+            else -> fail("GATT ${ops.current} timed out")
+        }
     }
+    // MTU (see MtuPolicy): largest MTU Android reported on this link, whether our request was answered, retried, trusted.
+    private var observedMtu = 0
+    private var mtuRetried = false
+    private var discovered = false
+    var mtuTrusted = false; private set
+    private var truncations = 0
+    // Give a fresh link ~600 ms to settle (and Android 14+'s own MTU exchange to finish) before asking for MTU.
+    private val startMtu = Runnable {
+        if (gatt == null || ready || ops.current != null) return@Runnable
+        // Android already reported a big enough MTU on this link: don't ask (an unanswered request costs 5 s).
+        if (observedMtu >= CartProtocol.MIN_MTU) { mtuTrusted = true; log("MTU $observedMtu (from Android)"); ops.add(GattOp.Discover) }
+        else ops.add(GattOp.Mtu)
+    }
+
+    /** Our MTU request got [answer] (null = none). Decide per MtuPolicy what comes next. */
+    private fun afterMtu(answer: Int?) {
+        main.removeCallbacks(opTimeout)
+        when (MtuPolicy.next(answer, observedMtu, mtuRetried, Build.VERSION.SDK_INT)) {
+            MtuPolicy.Next.TOO_SMALL -> { emit(BagState.Problem("This cart can't talk to this phone (MTU $answer).")); userStopped = true; close(); return }
+            MtuPolicy.Next.DISCOVER -> { mtuTrusted = true; ops.done(); ops.add(GattOp.Discover) }
+            MtuPolicy.Next.RETRY_AFTER_DISCOVERY -> { mtuRetried = true; log("MTU: no answer, asking again after discovery"); ops.done(); ops.add(GattOp.Discover) }
+            MtuPolicy.Next.UNCONFIRMED -> { fail("MTU unconfirmed"); return }
+            MtuPolicy.Next.PROCEED -> {
+                mtuTrusted = MtuPolicy.trusted(maxOf(observedMtu, answer ?: 0))
+                log(if (mtuTrusted) "MTU ok (${maxOf(observedMtu, answer ?: 0)})"
+                    else "MTU assumed (Android 14+ negotiates it itself); watching for cut-short messages")
+                ops.done()
+                if (!discovered) ops.add(GattOp.Discover)
+            }
+        }
+    }
+    private fun mtuNoAnswer(why: String) { log("MTU request $why"); afterMtu(null) }
     private val ignored = mutableSetOf<String>()                // addresses that turned out to be someone else's cart
 
     /**
@@ -98,6 +134,7 @@ class CartLink(
         if (!a.isEnabled) { emit(BagState.Problem("Turn on Bluetooth to connect your cart.")); return }
         if (allowed.isEmpty()) return
         userStopped = false
+        truncations = 0
         if (gatt != null) return                               // already connected / connecting
         main.removeCallbacks(retry)
         startScan()
@@ -167,7 +204,7 @@ class CartLink(
     /** Connect to one cart (pairing, or a known address). */
     fun connectTo(addr: String, bleName: String) {
         stopPairScan(); stopScan(); close()
-        userStopped = false; attempts = 0
+        userStopped = false; attempts = 0; truncations = 0
         address = addr; name = bleName
         open()
     }
@@ -199,6 +236,7 @@ class CartLink(
     private fun close() {
         main.removeCallbacks(opTimeout)
         main.removeCallbacks(heartbeat)
+        main.removeCallbacks(startMtu)
         ops.clear()
         val g = gatt
         gatt = null
@@ -227,23 +265,28 @@ class CartLink(
             when (op) {
                 GattOp.Mtu -> g.requestMtu(CartProtocol.MTU)
                 GattOp.Discover -> g.discoverServices()
-                is GattOp.Notify -> {
-                    val c = char(g, op.char) ?: return false
-                    g.setCharacteristicNotification(c, true)
-                    val d = c.getDescriptor(CCCD) ?: return false
-                    if (Build.VERSION.SDK_INT >= 33) g.writeDescriptor(d, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) == BluetoothStatusCodes.SUCCESS
-                    else { d.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE; g.writeDescriptor(d) }
+                is GattOp.Notify -> {                     // no early returns: the timeout must be cleared below on failure
+                    val c = char(g, op.char)
+                    val d = c?.getDescriptor(CCCD)
+                    if (c == null || d == null) false
+                    else {
+                        g.setCharacteristicNotification(c, true)
+                        if (Build.VERSION.SDK_INT >= 33) g.writeDescriptor(d, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) == BluetoothStatusCodes.SUCCESS
+                        else { d.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE; g.writeDescriptor(d) }
+                    }
                 }
                 is GattOp.Read -> char(g, op.char)?.let { g.readCharacteristic(it) } ?: false
                 is GattOp.Write -> {
-                    val c = char(g, CartProtocol.CONTROL) ?: return false
+                    val c = char(g, CartProtocol.CONTROL)
                     val bytes = op.text.toByteArray(Charsets.UTF_8)
                     log("→ ${op.text}")
-                    if (Build.VERSION.SDK_INT >= 33) g.writeCharacteristic(c, bytes, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == BluetoothStatusCodes.SUCCESS
+                    if (c == null) false
+                    else if (Build.VERSION.SDK_INT >= 33) g.writeCharacteristic(c, bytes, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == BluetoothStatusCodes.SUCCESS
                     else { c.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT; c.value = bytes; g.writeCharacteristic(c) }
                 }
             }
         } catch (e: Exception) { log("GATT $op failed: ${e.message}"); false }
+        if (!ok && op == GattOp.Mtu) { main.removeCallbacks(opTimeout); main.post { if (g === gatt && ops.current == GattOp.Mtu) mtuNoAnswer("refused") }; return true }
         if (!ok) { main.removeCallbacks(opTimeout); main.post { if (g === gatt) fail("GATT $op refused") } }
         return ok
     }
@@ -291,7 +334,8 @@ class CartLink(
                 if (g !== gatt) return@post
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     log("GATT connected")
-                    ops.clear(); ops.add(GattOp.Mtu)
+                    observedMtu = 0; mtuRetried = false; discovered = false; mtuTrusted = false
+                    ops.clear(); main.removeCallbacks(startMtu); main.postDelayed(startMtu, 600)
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     log("GATT disconnected ($status)")
                     close()
@@ -305,12 +349,10 @@ class CartLink(
         override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
             main.post {
                 if (g !== gatt) return@post
-                log("MTU $mtu")
-                if (mtu < CartProtocol.MIN_MTU) {
-                    emit(BagState.Problem("This cart can't talk to this phone (MTU $mtu)."))
-                    userStopped = true; close(); return@post
-                }
-                opDone(); ops.add(GattOp.Discover)
+                log("MTU $mtu" + if (status != BluetoothGatt.GATT_SUCCESS) " (status $status)" else "")
+                if (status == BluetoothGatt.GATT_SUCCESS) observedMtu = maxOf(observedMtu, mtu)
+                if (ops.current != GattOp.Mtu) return@post        // Android's own exchange, or a late answer: noted above
+                afterMtu(if (status == BluetoothGatt.GATT_SUCCESS) mtu else null)
             }
         }
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
@@ -318,6 +360,11 @@ class CartLink(
                 if (g !== gatt) return@post
                 opDone()
                 if (g.getService(SERVICE) == null) { emit(BagState.Problem("That device isn't a SmartCart.")); userStopped = true; close(); return@post }
+                discovered = true
+                if (mtuRetried && !mtuTrusted) {
+                    if (observedMtu >= CartProtocol.MIN_MTU) { mtuTrusted = true; log("MTU $observedMtu (from Android)") }
+                    else ops.add(GattOp.Mtu)                                // second (last) MTU request, after discovery
+                }
                 ops.add(GattOp.Notify(CartProtocol.STATUS)); ops.add(GattOp.Notify(CartProtocol.EVENTS))
             }
         }
@@ -356,6 +403,14 @@ class CartLink(
         val text = String(value, Charsets.UTF_8)
         main.post {
             if (g !== gatt) return@post
+            val parsed = when (uuid) { STATUS -> CartProtocol.status(text) != null; EVENTS -> CartProtocol.event(text) != null; else -> true }
+            if (MtuPolicy.truncated(value.size, parsed, mtuTrusted)) {
+                // Cut short by a small MTU: this link can't carry the protocol. Reconnect once (MTU is asked again);
+                // twice in a row means this phone and cart can't agree, so say so instead of looping.
+                if (++truncations >= 2) { emit(BagState.Problem("This cart can't talk to this phone. Turn Bluetooth off and on, then try again.")); userStopped = true; close(); return@post }
+                fail("message cut short (MTU too small)"); return@post
+            }
+            if (parsed) truncations = 0
             when (uuid) { STATUS -> onStatus(text); EVENTS -> onEvent(text) }
         }
     }

@@ -33,6 +33,8 @@ data class PairUi(val scan: String, val found: List<FoundBag>, val startedAt: Lo
 data class Probe(val address: String, val bleName: String, val connected: Boolean = false, val hello: String? = null,
                  val error: String? = null, val helloCount: Int = 0)
 
+private val FULL_CART = Regex("SmartCart-[0-9A-F]{4}")
+
 class ShopModel(private val app: Application) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val prefs = app.getSharedPreferences("smartbag", 0)
@@ -404,7 +406,7 @@ class ShopModel(private val app: Application) {
 
     private fun onControl(line: String) {
         val p = pairing?.probe ?: return
-        // "BAG SmartBag-3F2A fw2": the bag in the shopper's hand answered.
+        // "BAG SmartBag-3F2A fw3": the bag in the shopper's hand answered.
         pairing = pairing?.copy(probe = p.copy(hello = line.trim().removePrefix("BAG ").trim()))
     }
 
@@ -458,8 +460,9 @@ class ShopModel(private val app: Application) {
             summary = null
             // v1.2 §4.6: shop_summary(0) after every walk-out; here it is this receipt's trip.
             if (hwBackend != false) ops.trySend { summary = try { Api.summary(0).takeIf { it.receipt.id == r.id } } catch (_: Exception) { null } }
-            // The bag's light says "paid" only when it really was; a payment-due trip leaves it dark.
-            if (r.status == "paid") link.send("PAID ${r.code}")
+            // The bag's light tells how the trip ended: PAID (one blink) or, for payment due, DUE (three slow blinks, fw v3;
+            // older bags ignore DUE and stay dark).
+            if (linkBag is BagState.Connected) link.send(walkOutSignal(r))   // never queued for a later connection
             // In the foreground the receipt is on screen; still claim the code so a server push can't repeat it.
             if (!foreground) Notify.receipt(app, r) else Notify.claim(app, r.code)
             trips?.let { t -> trips = listOf(r) + t.filter { it.id != r.id } }
@@ -592,7 +595,8 @@ class ShopModel(private val app: Application) {
         val st = CartProtocol.status(t) as? CartProtocol.Status.State
         if (pairing?.probe == null) {
             // Connected by a guessed name (nameless advertisement): STATUS says which cart this really is.
-            if (st != null && !simulated && cart.allowed.isNotEmpty() && st.device !in cart.allowed) { cartSync.onDisconnected(); cart.reject(); return }
+            // Only a full SmartCart-XXXX name proves it's another cart (never a cut or odd name).
+            if (st != null && !simulated && cart.allowed.isNotEmpty() && FULL_CART.matches(st.device) && st.device !in cart.allowed) { cartSync.onDisconnected(); cart.reject(); return }
             cartSync.onStatus(t)
         }
     }
