@@ -19,7 +19,10 @@ def main(argv=None):
     parser.add_argument("--products-config", type=Path, default=DEFAULT_PRODUCTS_CONFIG)
     parser.add_argument("--geometry-config", type=Path, default=DEFAULT_GEOMETRY_PATH)
     parser.add_argument("--preview", action="store_true")
-    parser.add_argument("--transport", choices=("both", "console", "mock"), default="both")
+    parser.add_argument("--transport", choices=("both", "console", "mock", "ble", "ble+console"),
+                        default="both",
+                        help="ble / ble+console: send events to the Bag It app over Bluetooth "
+                             "(see hardware/smartcart_ble/README.md)")
     args = parser.parse_args(argv)
     if args.confidence is not None and not 0 <= args.confidence <= 1:
         parser.error("--confidence must be between 0 and 1")

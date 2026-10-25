@@ -50,6 +50,8 @@ class EventProcessor:
         self.last_status = "No confirmed crossing"
 
     def process(self, crossing):
+        if getattr(self.transport, "backend_counts", False):
+            return self._process_backend_counted(crossing)
         if crossing.action == "REMOVE" and self.counts[crossing.product_id] <= 0:
             self.last_status = "REMOVE rejected: no {} recorded in bag".format(crossing.product_id)
             return None
@@ -64,3 +66,27 @@ class EventProcessor:
             event["action"], event["product_id"], self.counts[event["product_id"]]
         )
         return event
+
+    def _process_backend_counted(self, crossing):
+        """BLE transport: the backend owns the cart. Every confirmed crossing is offered (a REMOVE the
+        backend has no item for is answered invalid_remove there), and the local counts follow only
+        events that were actually sent (send() returns their sequence number; None while no shopping
+        session is active)."""
+        event = self.event_factory.create(crossing.action, crossing.product_id, crossing.confidence)
+        seq = self.transport.send(event)
+        if seq is None:
+            self.last_status = "Not sent (no shopping session): {} {}".format(
+                event["action"], event["product_id"])
+            return None
+        if crossing.action == "ADD":
+            self.counts[crossing.product_id] += 1
+        else:
+            self.counts[crossing.product_id] = max(0, self.counts[crossing.product_id] - 1)
+        self.last_status = "{} {} sent (#{}) | bag count {}".format(
+            event["action"], event["product_id"], seq, self.counts[event["product_id"]])
+        return event
+
+    def reset_counts(self):
+        """A new shopping session started (BLE): the bag starts empty, like the backend's new cart."""
+        self.counts.clear()
+        self.last_status = "New shopping session"

@@ -70,16 +70,19 @@ The current event fields are `event_id`, `action`, `product_id`, `confidence`, a
 {"event_id":"sessiona1b2c3d4e5-17","action":"ADD","product_id":"apple","confidence":0.93,"timestamp":"2026-10-24T18:30:00Z"}
 ```
 
-The session-scoped sequence makes IDs unique across events and sessions. Local bag counts increase on accepted ADD and decrease on accepted REMOVE; a REMOVE with no recorded item is rejected. `hardware/transport.py` defines the `send(event)` interface with console, mock, and composite transports. Bluetooth is not implemented. Coordinate this event contract with the teammate who owns the app before connecting it; this work does not modify app or backend code.
+The session-scoped sequence makes IDs unique across events and sessions. Local bag counts increase on accepted ADD and decrease on accepted REMOVE; a REMOVE with no recorded item is rejected. `hardware/transport.py` defines the `send(event)` interface with console, mock, and composite transports; `--transport ble` adds Bluetooth (below). Coordinate this event contract with the teammate who owns the app before connecting it; this work does not modify app or backend code.
 
-### Future BLE GATT design (documentation only)
+### Bluetooth to the Bag It app (`--transport ble`)
 
-- Jetson is a BLE peripheral and the phone is a central that subscribes to notifications. Use a native phone app for iOS; do not depend on Web Bluetooth support in iOS browsers.
-- Stable custom service UUID: `8e4f4a20-2bb3-4a49-9f20-6f53a8500001`.
-- Event characteristic UUID (Notify + Read): `8e4f4a20-2bb3-4a49-9f20-6f53a8500002`.
-- Acknowledgement characteristic UUID (Write): `8e4f4a20-2bb3-4a49-9f20-6f53a8500003`.
-- Encode a versioned compact CBOR map with event ID, action, exact COCO product name, confidence scaled to an integer from 0–10000, and timestamp. Include a small fragment index/count envelope when a message exceeds the negotiated ATT payload; reassemble by event ID and reject incomplete payloads.
-- Keep unacknowledged events in a bounded queue while disconnected, reconnect with backoff, and replay them with the original IDs. The receiver persists processed event IDs and applies each event only once, then writes an ACK containing that ID. Duplicate notifications are acknowledged without reapplying. Surface queue overflow and permanent disconnect state to the local logger.
+Implemented in `hardware/smartcart_ble/` against the shared contract `hardware/smartcart_ble/SMARTCART-BLE.md` (v1.2): the Jetson is a BLE peripheral advertising service `7ccd0001-d416-4afc-a97d-f7c98e1afca9` as `SmartCart-XXXX`; the phone starts a session when it enters a store and receives each accepted ADD/REMOVE as `seq|A or R|label|confidence`. Needs `bluez`, `python3-dbus`, `python3-gi` (in the Jetson Linux image) and root or the `bluetooth` group.
+
+```bash
+bash hardware/smartcart_ble/tools/check_adapter.sh               # adapter / BlueZ / permission check
+sudo python3 -m hardware.smartcart_ble.tools.fake_cart --demo    # cart without camera/YOLO, for app testing
+sudo python3 -m hardware.main_tensorrt --transport ble+console   # real scanner over Bluetooth (+ JSON lines)
+```
+
+With `ble` the backend owns the cart: crossings while no shopping session is active are neither sent nor counted, a new session clears the local bag counts, local counts follow only events that were sent, and a REMOVE is sent even when the local count is 0 (the backend answers `invalid_remove` if it has none). Bluetooth runs in a child process (restarted automatically if it dies), so `--preview` works too; when the cart starts it disconnects any phone that was already connected so the app reconnects cleanly. From a laptop, `python3 -m hardware.smartcart_ble.tools.test_central` (needs `pip install bleak`) plays the phone. Details, troubleshooting and the API: `hardware/smartcart_ble/README.md`.
 
 ## Jetson TensorRT deployment
 
