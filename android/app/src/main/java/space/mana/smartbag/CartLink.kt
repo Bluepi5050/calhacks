@@ -45,6 +45,10 @@ class CartLink(
         val STATUS: UUID = UUID.fromString(CartProtocol.STATUS)
         val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         const val HEARTBEAT_MS = 15_000L
+        /** A cart that hasn't answered anything this long after the link came up never will (see [firstAnswer]). */
+        const val FIRST_ANSWER_MS = 4_000L
+        /** Quick reconnects in a row for that case before the normal backoff takes over. */
+        const val QUICK_RETRIES = 6
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -126,6 +130,18 @@ class CartLink(
         if (!userStopped) scheduleRetry()
     }
 
+    /**
+     * The Jetson's Bluetooth chip sometimes loses its "connected" event: the link is up, but the cart's side
+     * drops everything we send, and Android would wait ~20 s before giving up. If nothing at all has come back
+     * [FIRST_ANSWER_MS] after the link came up, hang up and try again at once (each try has a fresh chance).
+     */
+    private var heardFromCart = false
+    private var quickRetries = 0
+    private var retryQuickly = false
+    private val firstAnswer = Runnable {
+        if (gatt != null && !ready && !heardFromCart) { retryQuickly = true; fail("cart didn't answer") }
+    }
+
     private fun emit(s: BagState) { main.post { onState(s) } }
 
     /** Look for one of [allowed] (scan by service UUID) and connect. */
@@ -204,7 +220,7 @@ class CartLink(
     /** Connect to one cart (pairing, or a known address). */
     fun connectTo(addr: String, bleName: String) {
         stopPairScan(); stopScan(); close()
-        userStopped = false; attempts = 0; truncations = 0
+        userStopped = false; attempts = 0; quickRetries = 0; truncations = 0
         address = addr; name = bleName
         open()
     }
@@ -220,12 +236,13 @@ class CartLink(
 
     private val retry = Runnable { if (!userStopped) { if (address != null) open() else startScan() } }
 
-    /** Backoff 1, 2, 4, 8, 16, then every 30 s, until the shopper or the app stops it. */
+    /** Backoff 1, 2, 4, 8, 16, then every 30 s, until the shopper or the app stops it; 0.3 s after [firstAnswer]. */
     private fun scheduleRetry() {
         if (userStopped) return
-        attempts++
-        val delay = minOf(30_000L, 1000L shl minOf(attempts - 1, 5))
-        log("reconnecting in ${delay / 1000} s")
+        val quick = retryQuickly && quickRetries < QUICK_RETRIES
+        retryQuickly = false
+        val delay = if (quick) { quickRetries++; 300L } else { attempts++; minOf(30_000L, 1000L shl minOf(attempts - 1, 5)) }
+        log(if (quick) "reconnecting now (quick try $quickRetries of $QUICK_RETRIES)" else "reconnecting in ${delay / 1000} s")
         emit(BagState.Connecting(name, retry = true))
         main.removeCallbacks(retry)
         main.postDelayed(retry, delay)
@@ -233,10 +250,20 @@ class CartLink(
 
     private fun guessName(addr: String) = "SmartCart-" + addr.replace(":", "").takeLast(4).uppercase()
 
+    /**
+     * The scan filter is the cart service, so this is a cart: always give it a SmartCart- name. Prefer the name it
+     * advertises now; Android's device.name can be an old cached one (e.g. the Jetson's hostname), which made the
+     * app treat the cart as a bag when pairing and as someone else's device when auto-connecting.
+     */
+    private fun cartName(result: ScanResult): String =
+        listOf(result.scanRecord?.deviceName, result.device.name).firstOrNull { it != null && CartProtocol.isCartName(it) }
+            ?: guessName(result.device.address)
+
     private fun close() {
         main.removeCallbacks(opTimeout)
         main.removeCallbacks(heartbeat)
         main.removeCallbacks(startMtu)
+        main.removeCallbacks(firstAnswer)
         ops.clear()
         val g = gatt
         gatt = null
@@ -307,7 +334,7 @@ class CartLink(
                 if (result.device.address in ignored) return@post
                 // The name may not fit the advertisement: derive it from the address (XXXX = last two MAC bytes) and let
                 // STATUS (device_name) confirm it after connecting.
-                val n = (result.device.name ?: result.scanRecord?.deviceName).orEmpty().ifEmpty { guessName(result.device.address) }
+                val n = cartName(result)
                 if (n !in allowed) return@post                       // someone else's cart
                 stopScan()
                 address = result.device.address; name = n; attempts = 0
@@ -321,7 +348,7 @@ class CartLink(
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             main.post {
                 if (!pairScanning) return@post
-                val n = (result.device.name ?: result.scanRecord?.deviceName).orEmpty().ifEmpty { guessName(result.device.address) }
+                val n = cartName(result)
                 found[result.device.address] = FoundBag(result.device.address, n, result.rssi, System.currentTimeMillis())
                 onFound?.invoke(found.values.toList())
             }
@@ -334,8 +361,9 @@ class CartLink(
                 if (g !== gatt) return@post
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     log("GATT connected")
-                    observedMtu = 0; mtuRetried = false; discovered = false; mtuTrusted = false
+                    observedMtu = 0; mtuRetried = false; discovered = false; mtuTrusted = false; heardFromCart = false
                     ops.clear(); main.removeCallbacks(startMtu); main.postDelayed(startMtu, 600)
+                    main.removeCallbacks(firstAnswer); main.postDelayed(firstAnswer, FIRST_ANSWER_MS)
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     log("GATT disconnected ($status)")
                     close()
@@ -350,7 +378,7 @@ class CartLink(
             main.post {
                 if (g !== gatt) return@post
                 log("MTU $mtu" + if (status != BluetoothGatt.GATT_SUCCESS) " (status $status)" else "")
-                if (status == BluetoothGatt.GATT_SUCCESS) observedMtu = maxOf(observedMtu, mtu)
+                if (status == BluetoothGatt.GATT_SUCCESS) { observedMtu = maxOf(observedMtu, mtu); heardFromCart = true }
                 if (ops.current != GattOp.Mtu) return@post        // Android's own exchange, or a late answer: noted above
                 afterMtu(if (status == BluetoothGatt.GATT_SUCCESS) mtu else null)
             }
@@ -359,6 +387,7 @@ class CartLink(
             main.post {
                 if (g !== gatt) return@post
                 opDone()
+                if (status == BluetoothGatt.GATT_SUCCESS) heardFromCart = true
                 if (g.getService(SERVICE) == null) { emit(BagState.Problem("That device isn't a SmartCart.")); userStopped = true; close(); return@post }
                 discovered = true
                 if (mtuRetried && !mtuTrusted) {
@@ -375,7 +404,7 @@ class CartLink(
                 val wasEvents = d.characteristic.uuid == EVENTS
                 opDone()
                 if (wasEvents) {
-                    ready = true; attempts = 0
+                    ready = true; attempts = 0; quickRetries = 0
                     emit(BagState.Connected(name))
                     onReady()
                     readStatus()

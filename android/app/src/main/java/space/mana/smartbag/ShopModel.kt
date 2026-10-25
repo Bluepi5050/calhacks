@@ -388,7 +388,8 @@ class ShopModel(private val app: Application) {
         pairing = (pairing ?: PairUi("scanning", emptyList(), System.currentTimeMillis())).copy(probe = Probe(b.address, b.bleName))
         if (CartProtocol.isCartName(b.bleName)) cart.connectTo(b.address, b.bleName) else link.connectTo(b.address, b.bleName)
         scope.launch {
-            delay(12_000)
+            // A cart may need a few quick reconnects (CartLink.firstAnswer), about 4.5 s each: give it room for them.
+            delay(if (CartProtocol.isCartName(b.bleName)) 30_000 else 12_000)
             val p = pairing?.probe
             if (p != null && p.address == b.address && !p.connected && p.error == null)
                 pairing = pairing?.copy(probe = p.copy(error = "Couldn't connect to ${bagDisplayName(b.bleName)}. Make sure it's on and close by."))
