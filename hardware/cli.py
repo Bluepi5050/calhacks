@@ -8,12 +8,14 @@ from .scanner import add_transport_argument
 
 
 def add_scanner_arguments(parser):
-    """--confidence, --products-config, --geometry-config, --preview and --transport."""
+    """--confidence, --products-config, --geometry-config, --preview, --tracking-debug and --transport."""
     parser.add_argument("--confidence", type=float, default=None,
                         help="detection confidence (default from scan_geometry.json)")
     parser.add_argument("--products-config", type=Path, default=DEFAULT_PRODUCTS_CONFIG)
     parser.add_argument("--geometry-config", type=Path, default=DEFAULT_GEOMETRY_PATH)
     parser.add_argument("--preview", action="store_true")
+    parser.add_argument("--tracking-debug", action="store_true",
+                        help="log track recovery and crossing decisions")
     add_transport_argument(parser)
 
 

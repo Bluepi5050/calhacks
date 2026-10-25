@@ -4,7 +4,8 @@ from .item_tracker import Detection
 
 
 class YoloDetector:
-    def __init__(self, model_path="yolov8n.pt", confidence=0.5, device=None):
+    def __init__(self, model_path="yolov8n.pt", confidence=0.5, device=None,
+                 image_size=None):
         try:
             from ultralytics import YOLO
         except ImportError as exc:
@@ -12,6 +13,7 @@ class YoloDetector:
         self.model = YOLO(model_path)
         self.confidence = confidence
         self.device = device
+        self.image_size = image_size
         self.class_ids = None
 
     def set_class_ids(self, class_ids):
@@ -23,6 +25,8 @@ class YoloDetector:
             kwargs["classes"] = self.class_ids
         if self.device:
             kwargs["device"] = self.device
+        if self.image_size is not None:
+            kwargs["imgsz"] = self.image_size
         result = self.model.predict(frame, **kwargs)[0]
         detections = []
         if result.boxes is None:

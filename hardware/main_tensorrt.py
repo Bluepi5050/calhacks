@@ -26,7 +26,8 @@ def main(argv=None):
         detector = TensorRTDetector(args.engine, confidence=args.confidence)
         run_scanner(detector, args.source, products, args.geometry,
                     preview=args.preview, headless=not args.preview,
-                    transport_mode=args.transport)
+                    transport_mode=args.transport,
+                    tracking_debug=args.tracking_debug)
         return 0
     except KeyboardInterrupt:
         return 130

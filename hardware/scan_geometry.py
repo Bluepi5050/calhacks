@@ -50,6 +50,12 @@ class ScanGeometry:
     max_missed_seconds: float = 0.75
     minimum_iou: float = 0.05
     maximum_centroid_distance: float = 0.14
+    maximum_reacquisition_distance: float = 0.65
+    maximum_reacquisition_horizontal_distance: float = 0.15
+    maximum_vertical_speed: float = 1.5
+    maximum_box_size_ratio: float = 2.0
+    reassociation_min_confidence: float = 0.55
+    association_ambiguity_margin: float = 0.12
 
     @classmethod
     def from_file(cls, path=DEFAULT_GEOMETRY_PATH):
@@ -102,6 +108,13 @@ class ScanGeometry:
             "max_missed_seconds": float(raw.get("max_missed_seconds", 0.75)),
             "minimum_iou": float(raw.get("minimum_iou", 0.05)),
             "maximum_centroid_distance": float(raw.get("maximum_centroid_distance", 0.14)),
+            "maximum_reacquisition_distance": float(raw.get("maximum_reacquisition_distance", 0.65)),
+            "maximum_reacquisition_horizontal_distance": float(raw.get(
+                "maximum_reacquisition_horizontal_distance", 0.15)),
+            "maximum_vertical_speed": float(raw.get("maximum_vertical_speed", 1.5)),
+            "maximum_box_size_ratio": float(raw.get("maximum_box_size_ratio", 2.0)),
+            "reassociation_min_confidence": float(raw.get("reassociation_min_confidence", 0.55)),
+            "association_ambiguity_margin": float(raw.get("association_ambiguity_margin", 0.12)),
         }
         if values["add_direction"] not in ("outside_to_inside", "inside_to_outside"):
             raise ValueError("add_direction must be outside_to_inside or inside_to_outside")
@@ -121,6 +134,15 @@ class ScanGeometry:
             raise ValueError("max_missed_seconds and minimum_iou are out of range")
         if values["maximum_centroid_distance"] <= 0:
             raise ValueError("maximum_centroid_distance must be positive")
+        if (values["maximum_reacquisition_distance"] <= 0
+                or values["maximum_reacquisition_horizontal_distance"] <= 0
+                or values["maximum_vertical_speed"] <= 0):
+            raise ValueError("reacquisition distances and vertical speed must be positive")
+        if values["maximum_box_size_ratio"] <= 1:
+            raise ValueError("maximum_box_size_ratio must exceed 1")
+        if (not 0 <= values["reassociation_min_confidence"] <= 1
+                or not 0 <= values["association_ambiguity_margin"] <= 1):
+            raise ValueError("reassociation confidence and ambiguity margin must be in [0, 1]")
         return cls(**values)
 
     def zone_at(self, point):
