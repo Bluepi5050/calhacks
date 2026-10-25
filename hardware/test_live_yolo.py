@@ -37,22 +37,12 @@ def parse_args(argv=None):
 
 
 def open_camera(camera_index):
-    import cv2
+    from hardware.scanner import open_capture  # imports cv2: keep it out of module import, like run()
 
-    # DirectShow is usually the most reliable OpenCV backend for Windows webcams.
-    if sys.platform == "win32":
-        camera = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
-        if camera.isOpened():
-            return camera
-        camera.release()
-    camera = cv2.VideoCapture(camera_index)
-    if not camera.isOpened():
-        camera.release()
-        raise RuntimeError(
-            "could not open camera index {}. Check that the webcam is connected, "
-            "not in use by another app, and try --camera 1.".format(camera_index)
-        )
-    return camera
+    try:
+        return open_capture(camera_index)
+    except RuntimeError as exc:
+        raise RuntimeError("{}. Try --camera 1.".format(exc)) from exc
 
 
 def run(camera_index=0, confidence=0.5, products_config=None):

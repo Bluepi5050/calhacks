@@ -8,12 +8,10 @@ from pathlib import Path
 
 import cv2
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPOSITORY_ROOT))
 
-def camera_device(value):
-    """Treat an all-digit device argument as an OpenCV camera index."""
-    if value.isdecimal():
-        return int(value)
-    return value
+from hardware.scanner import configure_capture, open_capture, source_value  # noqa: E402
 
 
 def parse_args():
@@ -22,7 +20,7 @@ def parse_args():
     )
     parser.add_argument(
         "--device",
-        type=camera_device,
+        type=source_value,
         default="/dev/video0",
         help="camera index (for example 0) or device path (default: /dev/video0)",
     )
@@ -48,9 +46,9 @@ def main():
     args = parse_args()
     capture = None
     try:
-        capture = cv2.VideoCapture(args.device)
-        if not capture.isOpened():
-            raise RuntimeError("could not open camera device {!r}".format(args.device))
+        # Same backend and mode request as the scanner (V4L2 + MJPG on Linux), so the FPS here is the scanner's.
+        capture = open_capture(args.device)
+        configure_capture(capture)
 
         last_frame = None
         first_frame_shape = None
