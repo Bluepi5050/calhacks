@@ -67,7 +67,7 @@ async function chargeOnce(o, id) {
   });
   try {
     const r = await fetch('https://api.stripe.com/v1/payment_intents', {
-      method: 'POST', body,
+      method: 'POST', body, signal: AbortSignal.timeout(20_000),      // a stalled request fails loudly, not silently
       // -v2: the first version's keys may hold a stored error for different parameters, which Stripe would replay.
       headers: { Authorization: `Bearer ${key}`, 'Idempotency-Key': `bagit-order-${id}-v2` },
     });
