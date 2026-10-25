@@ -42,14 +42,24 @@ function testCard(label) {
   return 'pm_card_visa';
 }
 
+const inFlight = new Set();   // the SDK reports existing rows as inserts too: never send one order twice at once
+
 async function charge(o) {
   const id = String(o.id);
-  if (state.charged[id]) return;
+  if (state.charged[id] || inFlight.has(id)) return;
+  inFlight.add(id);
+  try { await chargeOnce(o, id); } finally { inFlight.delete(id); }
+}
+
+async function chargeOnce(o, id) {
   const pm = testCard(o.payment);
   const what = `order ${id} ${o.code} at ${o.storeName}: ${money(o.totalCents)} (${o.payment}) -> ${pm}`;
   if (dryRun) { log(`would charge ${what}`); return; }
   const body = new URLSearchParams({
-    amount: String(o.totalCents), currency: 'usd', payment_method: pm, 'payment_method_types[]': 'card', confirm: 'true',
+    // Current Stripe API versions take payment methods from the Dashboard (automatic_payment_methods); a card needs
+    // no redirect, so confirm right here.
+    amount: String(o.totalCents), currency: 'usd', payment_method: pm, confirm: 'true',
+    'automatic_payment_methods[enabled]': 'true', 'automatic_payment_methods[allow_redirects]': 'never',
     description: `Bag It walk-out ${o.code} at ${o.storeName}`,
     statement_descriptor_suffix: 'BAG IT',
     'metadata[order_id]': id, 'metadata[exit_code]': o.code, 'metadata[store_id]': o.storeId,
@@ -58,7 +68,8 @@ async function charge(o) {
   try {
     const r = await fetch('https://api.stripe.com/v1/payment_intents', {
       method: 'POST', body,
-      headers: { Authorization: `Bearer ${key}`, 'Idempotency-Key': `bagit-order-${id}` },
+      // -v2: the first version's keys may hold a stored error for different parameters, which Stripe would replay.
+      headers: { Authorization: `Bearer ${key}`, 'Idempotency-Key': `bagit-order-${id}-v2` },
     });
     const pi = await r.json();
     if (!r.ok) { log(`FAILED ${what}: ${pi.error?.message ?? r.status}`); return; }

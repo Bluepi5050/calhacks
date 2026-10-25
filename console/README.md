@@ -17,7 +17,7 @@ Live dashboard for store staff: who is shopping, what's in each bag (priced live
 
 ## Stripe charges (test mode)
 
-`stripe-charger.mjs` turns every walk-out the database records as **paid** into a Stripe charge for the order total, in **test mode only** (live keys are refused). It watches `shop_order`, and for each new paid order creates and confirms a PaymentIntent with Stripe's test card for the order's card brand (`pm_card_visa` for Visa). The order id, exit code and store go in the charge's metadata, and the idempotency key `bagit-order-<id>` stops double charges. Orders from before its first run are never charged; ones paid while it was stopped are charged when it starts. State: `.stripe-charger.json` (git-ignored).
+`stripe-charger.mjs` turns every walk-out the database records as **paid** into a Stripe charge for the order total, in **test mode only** (live keys are refused). It watches `shop_order`, and for each new paid order creates and confirms a PaymentIntent with Stripe's test card for the order's card brand (`pm_card_visa` for Visa). The order id, exit code and store go in the charge's metadata, and the idempotency key `bagit-order-<id>-v2` stops double charges. Orders from before its first run are never charged; ones paid while it was stopped are charged when it starts. State: `.stripe-charger.json` (git-ignored).
 
 ```sh
 npm install && npx esbuild entry.ts --bundle --format=esm --platform=browser --target=es2020 --minify --outfile=dist/stdb-client.mjs
