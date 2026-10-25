@@ -10,6 +10,7 @@ $project = "/home/$SshUser/calhacks"
 $destination = "$project/hardware"
 $codeFiles = @(
     "hardware/__init__.py",
+    "hardware/coco.py",
     "hardware/crossing.py",
     "hardware/item_tracker.py",
     "hardware/events.py",
