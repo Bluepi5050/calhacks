@@ -872,7 +872,7 @@ private fun ShopStatus(s: ShopUi, a: ShopActions) {
     }
     if (s.syncError != null && s.store !is StoreState.Offline) {
         Spacer(Modifier.height(8.dp))
-        Txt("Something didn't sync. If an item is missing, take it out and drop it in again.", Type.caption, p.bad,
+        Txt("Something didn't sync. Bag It keeps trying. If an item is still missing, take it out and drop it in again.", Type.caption, p.bad,
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
     }
 }
@@ -1035,7 +1035,7 @@ fun ReceiptScreen(r: Receipt, peak: Boolean, onDone: () -> Unit, minBar: Dp = 0.
                 Txt(time + if (r.payment.isNotEmpty()) " · ${card(r.payment)}" else "", Type.body, p.muted)
                 if (due) {
                     Spacer(Modifier.height(16.dp))
-                    Txt("There was no card on file, so nothing was charged. Show this code to staff to pay.", Type.body, balanced = true)
+                    Txt("No card was on file, so nothing was charged. Show your exit code to store staff.", Type.body, balanced = true)
                 }
             }
             Spacer(Modifier.height(40.dp))
