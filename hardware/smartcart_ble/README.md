@@ -2,7 +2,7 @@
 
 The cart talks to the **Bag It** phone app over Bluetooth LE. The Jetson is a BLE *peripheral*: it advertises the SmartCart service, the phone connects, starts a shopping session when it walks into a store, and receives every confirmed ADD/REMOVE as a notification. Prices, the cart total and the walk-out charge all live in the backend; the Jetson only reports crossings.
 
-The binding contract is [`SMARTCART-BLE.md`](SMARTCART-BLE.md) (v1.1). This package implements its Jetson side exactly. Your detector, tracker and crossing logic are untouched.
+The binding contract is [`SMARTCART-BLE.md`](SMARTCART-BLE.md) (v1.2). This package implements its Jetson side exactly. Your detector, tracker and crossing logic are untouched.
 
 * Python 3.10 (system `/usr/bin/python3` on Jetson Linux R36), no pip packages.
 * BlueZ over D-Bus: `bluez`, `python3-dbus`, `python3-gi` (all in the Jetson Linux image; otherwise `sudo apt install bluez python3-dbus python3-gi`).
@@ -85,7 +85,7 @@ cart.stop()
 
 `publish()` is thread-safe and never blocks on Bluetooth: D-Bus runs in one background thread (`smartcart-ble`). `BleTransport` (what the scanner uses) runs this in a child process instead (`SmartCartProcess`, same API), so GLib never shares a main loop with OpenCV's GTK preview; its log lines start with `smartcart-ble`. Labels are the COCO class names from `data/detectable_products.json`, lowercased, max 20 characters. Callbacks run on the Bluetooth thread, so keep them short.
 
-## What the cart does (contract v1.1 in one screen)
+## What the cart does (contract v1.2 in one screen)
 
 | | |
 |---|---|
@@ -94,10 +94,11 @@ cart.stop()
 | EVENTS `…0003` (notify) | `seq|A or R|label|confidence`, e.g. `17|A|apple|93` |
 | STATUS `…0004` (read, notify) | `S|sid or -|IDLE or ACTIVE|last_seq|unacked|name`, `OK|START|sid`, `OK|STOP|sid`, `ERR|code|detail` |
 
-* START of the active session = resume: `OK|START` first, then every unacked event again, in order. START of another session drops the old one; seq restarts at 1.
+* START of the active session = resume: `OK|START` first, then every unacked event again, in order. START of another session drops the old one; its seq continues after the last seq this cart ever sent for that sid (persisted), 1 if it never used it.
 * The last 64 unacked events are kept; ACK removes one. STOP of a session that isn't active still answers OK.
 * No phone connected for 30 minutes while ACTIVE: the cart ends the session itself.
-* Malformed writes are answered with `ERR|BAD_CMD|…` or `ERR|BAD_SID|…` on STATUS (the GATT write itself succeeds).
+* Malformed writes are answered with `ERR|BAD_CMD|…` or `ERR|BAD_SID|…` on STATUS (the GATT write itself succeeds); during shutdown commands get `ERR|BUSY|cart shutting down`.
+* A cart (re)start always looks like a disconnect to the phone: at startup and after re-registering with bluetoothd the cart disconnects every device that was already connected (pass `disconnect_on_start=False` to `SmartCartBLE` to keep, say, a Bluetooth keyboard during development), and if the Bluetooth child process dies it is restarted (1, 2, 5, 10, 30 s backoff).
 
 ## Permissions
 
@@ -135,7 +136,9 @@ No experimental BlueZ features are needed (GATT server and LE advertising are st
 
 **bluetoothd restarts**: the cart notices, waits for the adapter to come back (retrying with backoff), powers it and registers again. The session stays in memory; if the scanner itself restarts it starts IDLE, the phone sends START again and numbering continues (see sessions above).
 
-**The Bluetooth process died**: the scanner logs `Bluetooth process exited unexpectedly` and stops sending; restart the scanner (the systemd unit does this with `Restart=on-failure` only if the scanner exits, so check the journal).
+**The Bluetooth process died**: the scanner logs `Bluetooth process exited unexpectedly`, events are not sent (and not counted) while it is down, and it is restarted automatically with backoff. The new process disconnects the phone so it reconnects, sends START and numbering continues. If it keeps failing, the log says why (`Bluetooth restart failed: …`).
+
+**Other Bluetooth devices drop when the cart starts**: by design (contract v1.2), every link that existed before the cart registered is disconnected once. Devices that connect afterwards are left alone.
 
 **See the raw traffic**: `sudo btmon` shows advertising, connections, MTU exchange and every write/notification.
 
@@ -146,7 +149,7 @@ No experimental BlueZ features are needed (GATT server and LE advertising are st
 | `protocol.py` | Every message: encode, decode, validate (pure) |
 | `session.py` | Jetson state machine: IDLE/ACTIVE, seq, 64-event resend buffer, resume, STOP, ACK, stale timer, last seq per session (fake-clock tested) |
 | `peripheral.py` | `SmartCartBLE`: BlueZ GATT server + LE advertisement over D-Bus, background GLib thread, connection/MTU tracking |
-| `process.py` | `SmartCartProcess`: the same API with Bluetooth in a child process (used by `BleTransport`) |
+| `process.py` | `SmartCartProcess`: the same API with Bluetooth in a child process (used by `BleTransport`), respawned if it dies |
 | `transport_adapter.py` | `BleTransport`: the scanner's `send(event)` transport |
 | `tools/fake_cart.py` | The cart without YOLO (`--demo`, interactive, `--no-ble`) |
 | `tools/test_central.py` | Phone simulator with bleak (`--resume-test`) |
@@ -154,10 +157,10 @@ No experimental BlueZ features are needed (GATT server and LE advertising are st
 | `tools/smartcart-scanner.service` | Example systemd unit |
 | `SMARTCART-BLE.md` | The contract (v1.1) |
 
-Tests (`hardware/tests/test_smartcart_*.py`, `hardware/tests/test_ble_transport_wiring.py`): protocol and session (pure), BleTransport and the scanner hooks, the phone-side rules, the fake cart offline, and the full D-Bus server against a mocked BlueZ (python-dbusmock: GATT tree, advertisement, alias, read/notify/write with device + MTU options, resume order, errors, clean shutdown, numbering after a cart restart, the child-process cart). The D-Bus tests skip when `python3-dbusmock` is missing (`sudo apt install python3-dbusmock` to run them).
+Tests (`hardware/tests/test_smartcart_*.py`, `hardware/tests/test_ble_transport_wiring.py`): protocol and session (pure), BleTransport and the scanner hooks, the phone-side rules, the fake cart offline, and the full D-Bus server against a mocked BlueZ (python-dbusmock: GATT tree, advertisement, alias, read/notify/write with device + MTU options, resume order, errors, clean shutdown, numbering after a cart restart, the child-process cart, disconnecting pre-existing links at startup, respawning a killed Bluetooth child). The D-Bus tests skip when `python3-dbusmock` is missing (`sudo apt install python3-dbusmock` to run them).
 
 ## Verified and not verified
 
-Verified (2026-10-24, x86 sandbox, Python 3.10 and 3.12): all unit tests; the real `SmartCartBLE` D-Bus objects (directly and through `SmartCartProcess`) in separate processes against a mocked BlueZ on a private system bus; the teammate's existing tests still pass. One independent protocol review; its P0/P1 findings are fixed (numbering after a cart restart, preview + Bluetooth in one process, local REMOVE gate, re-register after bluetoothd restarts, simulator write serialisation and phone-side rules).
+Verified (2026-10-24, x86 sandbox, Python 3.10 and 3.12): all unit tests; the real `SmartCartBLE` D-Bus objects (directly and through `SmartCartProcess`) in separate processes against a mocked BlueZ on a private system bus; the teammate's existing tests still pass. Contract v1.2 additions (2026-10-24): startup disconnect and child respawn, both tested against the mocked BlueZ. One independent protocol review; its P0/P1 findings are fixed (numbering after a cart restart, preview + Bluetooth in one process, local REMOVE gate, re-register after bluetoothd restarts, simulator write serialisation and phone-side rules).
 
 Not verified (no Bluetooth radio was available): a real BlueZ 5.64 on the Jetson, the actual advertisement on air, a real phone connecting, MTU negotiation, notification delivery timing, controller behavior after disconnects. Run `check_adapter.sh`, then `fake_cart --demo` + `test_central --resume-test` from a laptop to cover these in five minutes.

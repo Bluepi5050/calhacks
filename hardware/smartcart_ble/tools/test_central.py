@@ -1,4 +1,4 @@
-"""Phone simulator for SmartCart (contract v1.1): test the Jetson without the Bag It app.
+"""Phone simulator for SmartCart (contract v1.2): test the Jetson without the Bag It app.
 
 Runs on any laptop with Bluetooth (Linux/BlueZ, macOS, Windows): pip install bleak
     python3 -m hardware.smartcart_ble.tools.test_central                 # interactive

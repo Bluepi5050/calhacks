@@ -1,4 +1,4 @@
-"""SmartCart BLE: the Jetson side of the SmartCart <-> Bag It Bluetooth contract (v1.1).
+"""SmartCart BLE: the Jetson side of the SmartCart <-> Bag It Bluetooth contract (v1.2).
 
     from hardware.smartcart_ble import SmartCartBLE      # or: from smartcart_ble import SmartCartBLE
     cart = SmartCartBLE().start()
@@ -7,8 +7,8 @@
 `protocol` and `session` are pure Python and import anywhere. `SmartCartBLE` / `BleTransport` need
 python3-dbus + python3-gi (BlueZ over D-Bus) and are imported lazily, so the rest works without them.
 """
-__version__ = "1.0.0"
-CONTRACT_VERSION = "1.1"
+__version__ = "1.1.0"
+CONTRACT_VERSION = "1.2"
 
 from . import protocol  # noqa: E402,F401
 from .protocol import SERVICE_UUID, CONTROL_UUID, EVENTS_UUID, STATUS_UUID  # noqa: E402,F401

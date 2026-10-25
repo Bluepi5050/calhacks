@@ -74,7 +74,7 @@ The session-scoped sequence makes IDs unique across events and sessions. Local b
 
 ### Bluetooth to the Bag It app (`--transport ble`)
 
-Implemented in `hardware/smartcart_ble/` against the shared contract `hardware/smartcart_ble/SMARTCART-BLE.md` (v1.1): the Jetson is a BLE peripheral advertising service `7ccd0001-d416-4afc-a97d-f7c98e1afca9` as `SmartCart-XXXX`; the phone starts a session when it enters a store and receives each accepted ADD/REMOVE as `seq|A or R|label|confidence`. Needs `bluez`, `python3-dbus`, `python3-gi` (in the Jetson Linux image) and root or the `bluetooth` group.
+Implemented in `hardware/smartcart_ble/` against the shared contract `hardware/smartcart_ble/SMARTCART-BLE.md` (v1.2): the Jetson is a BLE peripheral advertising service `7ccd0001-d416-4afc-a97d-f7c98e1afca9` as `SmartCart-XXXX`; the phone starts a session when it enters a store and receives each accepted ADD/REMOVE as `seq|A or R|label|confidence`. Needs `bluez`, `python3-dbus`, `python3-gi` (in the Jetson Linux image) and root or the `bluetooth` group.
 
 ```bash
 bash hardware/smartcart_ble/tools/check_adapter.sh               # adapter / BlueZ / permission check
@@ -82,7 +82,7 @@ sudo python3 -m hardware.smartcart_ble.tools.fake_cart --demo    # cart without 
 sudo python3 -m hardware.main_tensorrt --transport ble+console   # real scanner over Bluetooth (+ JSON lines)
 ```
 
-With `ble` the backend owns the cart: crossings while no shopping session is active are neither sent nor counted, a new session clears the local bag counts, local counts follow only events that were sent, and a REMOVE is sent even when the local count is 0 (the backend answers `invalid_remove` if it has none). Bluetooth runs in a child process, so `--preview` works too. From a laptop, `python3 -m hardware.smartcart_ble.tools.test_central` (needs `pip install bleak`) plays the phone. Details, troubleshooting and the API: `hardware/smartcart_ble/README.md`.
+With `ble` the backend owns the cart: crossings while no shopping session is active are neither sent nor counted, a new session clears the local bag counts, local counts follow only events that were sent, and a REMOVE is sent even when the local count is 0 (the backend answers `invalid_remove` if it has none). Bluetooth runs in a child process (restarted automatically if it dies), so `--preview` works too; when the cart starts it disconnects any phone that was already connected so the app reconnects cleanly. From a laptop, `python3 -m hardware.smartcart_ble.tools.test_central` (needs `pip install bleak`) plays the phone. Details, troubleshooting and the API: `hardware/smartcart_ble/README.md`.
 
 ## Jetson TensorRT deployment
 

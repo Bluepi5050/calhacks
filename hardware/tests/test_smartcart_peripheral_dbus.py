@@ -276,6 +276,87 @@ class PeripheralOverMockBluez(dbusmock.DBusTestCase if HAVE_DBUS else unittest.T
         self.assertTrue(self.pump(lambda: self.calls("UnregisterApplication")))
         self.assertIsNone(cart.publish("ADD", "apple", 1))
 
+    def connected_device(self, address="11:22:33:44:55:77"):
+        """A device BlueZ already reports as connected (link up before the cart registers)."""
+        dev = self.mock.AddDevice("hci0", address, "Pixel")
+        obj = self.bus.get_object("org.bluez", dev)
+        dbus.Interface(obj, "org.bluez.Device1").Connect()
+        dbus.Interface(obj, "org.freedesktop.DBus.Properties").Set("org.bluez.Device1", "Connected", True)
+        return dev, dbus.Interface(obj, dbusmock.MOCK_IFACE)
+
+    def test_startup_disconnects_existing_links(self):
+        self.add_adapter()
+        dev, dev_mock = self.connected_device()
+        self.spawn_cart()
+        self.assertTrue(self.pump(lambda: len(dev_mock.GetMethodCalls("Disconnect")) == 1), "\n".join(self.lines))
+        self.assertTrue(self.pump(lambda: any("so the phone reconnects" in l for l in self.lines)))
+        # a phone that connects after registration is not touched
+        late = self.mock.AddDevice("hci0", "11:22:33:44:55:88", "Late")
+        late_obj = self.bus.get_object("org.bluez", late)
+        dbus.Interface(late_obj, "org.bluez.Device1").Connect()
+        time.sleep(1.0)
+        self.pump(lambda: False, timeout=0.5)
+        self.assertEqual(dbus.Interface(late_obj, dbusmock.MOCK_IFACE).GetMethodCalls("Disconnect"), [])
+
+    def test_startup_disconnect_can_be_turned_off(self):
+        try:
+            from hardware.smartcart_ble.peripheral import SmartCartBLE
+        except ImportError:
+            from smartcart_ble.peripheral import SmartCartBLE
+        self.add_adapter()
+        dev, dev_mock = self.connected_device()
+        cart = SmartCartBLE(disconnect_on_start=False, state_file=None, object_path="/org/smartcart_t")
+        cart.start()
+        try:
+            self.pump(lambda: cart.advertising, timeout=3)
+            self.assertEqual(dev_mock.GetMethodCalls("Disconnect"), [])
+        finally:
+            cart.stop()
+
+    def test_process_respawns_dead_child(self):
+        try:
+            from hardware.smartcart_ble.process import SmartCartProcess
+        except ImportError:
+            from smartcart_ble.process import SmartCartProcess
+        import signal
+        self.add_adapter()
+        os.environ["SMARTCART_STATE_FILE"] = self.state_file
+        SmartCartProcess.RESPAWN_S = (0.2,)
+        stops = []
+        cart = SmartCartProcess(on_session_stop=lambda sid, why: stops.append((sid, why)))
+        try:
+            cart.start()
+            owner, _ = self.cart_name()
+            control, events = self.chrc(owner, 0), self.chrc(owner, 1)
+            events.StartNotify()
+            dev, dev_mock = self.connected_device()
+            control.WriteValue(dbus.ByteArray(b"START|r1|bayside-grocer"), {"device": dbus.ObjectPath(dev)})
+            self.assertTrue(self.pump(lambda: cart.active))
+            self.assertEqual(cart.publish("ADD", "apple", 0.9), 1)
+            first = cart.pid
+            os.kill(first, signal.SIGKILL)                              # the Bluetooth child crashes
+            self.assertTrue(self.pump(lambda: not cart.active and ("r1", "crash") in stops), stops)
+            self.assertIsNone(cart.publish("ADD", "apple", 0.9))      # down: not sent
+            self.assertTrue(self.pump(lambda: cart.restarts == 1 and len(self.calls("RegisterApplication")) == 2,
+                                      timeout=20))
+            self.assertNotEqual(cart.pid, first)
+            # the phone's link predates the new child: it gets disconnected, so the phone reconnects
+            self.assertTrue(self.pump(lambda: len(dev_mock.GetMethodCalls("Disconnect")) == 1))
+            owner, _ = self.cart_name()
+            control, events = self.chrc(owner, 0), self.chrc(owner, 1)
+            events.StartNotify()
+            self.signals.clear()
+            control.WriteValue(dbus.ByteArray(b"START|r1|bayside-grocer"), {"mtu": dbus.UInt16(247)})
+            self.assertTrue(self.pump(lambda: cart.active))
+            self.assertEqual(cart.publish("ADD", "apple", 0.9), 2)    # numbering continues after the crash
+            self.assertTrue(self.pump(lambda: self.notes(1) == ["2|A|apple|90"]), self.signals)
+        finally:
+            SmartCartProcess.RESPAWN_S = (1, 2, 5, 10, 30)
+            cart.stop()
+            os.environ.pop("SMARTCART_STATE_FILE", None)
+        time.sleep(0.5)
+        self.assertEqual(cart.restarts, 1)                              # stop() does not respawn
+
     def test_process_isolated_cart_reports_errors(self):
         try:
             from hardware.smartcart_ble.process import SmartCartProcess

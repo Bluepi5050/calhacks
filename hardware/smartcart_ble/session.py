@@ -1,4 +1,4 @@
-"""The Jetson's session state machine for SmartCart BLE (contract v1.1). Pure: no Bluetooth, no threads.
+"""The Jetson's session state machine for SmartCart BLE (contract v1.2). Pure: no Bluetooth, no threads.
 
     IDLE --START|sid--> ACTIVE(sid)            seq starts at 1, buffer empty
     ACTIVE(sid) --START|sid--> ACTIVE(sid)     resume: OK first, then every unacked event again, in order

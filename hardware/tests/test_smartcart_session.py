@@ -1,4 +1,4 @@
-"""SmartCart BLE contract v1.1: the Jetson session state machine with a fake clock."""
+"""SmartCart BLE contract v1.2: the Jetson session state machine with a fake clock."""
 import unittest
 
 try:
