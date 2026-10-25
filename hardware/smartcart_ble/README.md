@@ -2,7 +2,7 @@
 
 The cart talks to the **Bag It** phone app over Bluetooth LE. The Jetson is a BLE *peripheral*: it advertises the SmartCart service, the phone connects, starts a shopping session when it walks into a store, and receives every confirmed ADD/REMOVE as a notification. Prices, the cart total and the walk-out charge all live in the backend; the Jetson only reports crossings.
 
-The binding contract is [`SMARTCART-BLE.md`](SMARTCART-BLE.md) (v1.2). This package implements its Jetson side exactly. Your detector, tracker and crossing logic are untouched.
+The binding contract is [`docs/SMARTCART-BLE.md`](../../docs/SMARTCART-BLE.md) (v1.2). This package implements its Jetson side exactly. Your detector, tracker and crossing logic are untouched.
 
 * Python 3.10 (system `/usr/bin/python3` on Jetson Linux R36), no pip packages.
 * BlueZ over D-Bus: `bluez`, `python3-dbus`, `python3-gi` (all in the Jetson Linux image; otherwise `sudo apt install bluez python3-dbus python3-gi`).
@@ -155,7 +155,6 @@ No experimental BlueZ features are needed (GATT server and LE advertising are st
 | `tools/test_central.py` | Phone simulator with bleak (`--resume-test`) |
 | `tools/check_adapter.sh` | Adapter / BlueZ / permission check |
 | `tools/smartcart-scanner.service` | Example systemd unit |
-| `SMARTCART-BLE.md` | The contract (v1.1) |
 
 Tests (`hardware/tests/test_smartcart_*.py`, `hardware/tests/test_ble_transport_wiring.py`): protocol and session (pure), BleTransport and the scanner hooks, the phone-side rules, the fake cart offline, and the full D-Bus server against a mocked BlueZ (python-dbusmock: GATT tree, advertisement, alias, read/notify/write with device + MTU options, resume order, errors, clean shutdown, numbering after a cart restart, the child-process cart, disconnecting pre-existing links at startup, respawning a killed Bluetooth child). The D-Bus tests skip when `python3-dbusmock` is missing (`sudo apt install python3-dbusmock` to run them).
 

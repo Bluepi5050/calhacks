@@ -87,7 +87,7 @@ def configure_capture(capture, *, width=1280, height=720, fps=30, is_camera=True
 
 def make_transport(mode="both"):
     if mode in ("ble", "ble+console"):
-        # Bluetooth to the Bag It app (hardware/smartcart_ble, contract SMARTCART-BLE.md).
+        # Bluetooth to the Bag It app (hardware/smartcart_ble, contract docs/SMARTCART-BLE.md).
         from .smartcart_ble.transport_adapter import BleTransport
         return BleTransport(also=JsonLineTransport() if mode == "ble+console" else None), None
     if mode == "console":
