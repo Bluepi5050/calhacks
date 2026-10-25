@@ -763,12 +763,22 @@ class SmartCartBLE:
                 self._session.stopping = True
                 self._queue(self._session.stop_local("local"))
         self._flush()
-        pending = {"n": 2}
+        # The link belongs to bluetoothd, not to us: without this the phone stays connected to a cart that is
+        # gone and keeps showing it as connected. Ask BlueZ itself, since _connected can miss new devices.
+        links = self._connected_devices()
+        pending = {"n": 2 + len(links)}
 
         def finish(*_):
             pending["n"] -= 1
             if pending["n"] <= 0:
                 self._teardown(done)
+        for path in links:
+            log.info("disconnecting %s (cart stopping)", path)
+            try:
+                dbus.Interface(self._bus.get_object(BLUEZ, path), DEVICE).Disconnect(
+                    reply_handler=finish, error_handler=finish)
+            except dbus.exceptions.DBusException:
+                finish()
         try:
             adapter_obj = self._bus.get_object(BLUEZ, self.adapter_path)
             dbus.Interface(adapter_obj, ADV_MANAGER).UnregisterAdvertisement(
@@ -780,6 +790,15 @@ class SmartCartBLE:
             return False
         GLib.timeout_add(2000, lambda: (self._teardown(done), False)[1])
         return False
+
+    def _connected_devices(self):
+        """Device1 paths on our adapter that BlueZ reports as connected right now."""
+        try:
+            objs = dbus.Interface(self._bus.get_object(BLUEZ, "/"), OBJ_MANAGER).GetManagedObjects(timeout=2)
+        except dbus.exceptions.DBusException:
+            return sorted(self._connected)
+        return sorted(str(p) for p, ifaces in objs.items()
+                      if DEVICE in ifaces and self._is_ours(p) and bool(ifaces[DEVICE].get("Connected", False)))
 
     def _teardown(self, done: threading.Event):
         if done.is_set():
