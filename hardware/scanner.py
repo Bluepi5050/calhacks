@@ -405,7 +405,7 @@ def run_scanner(detector, source, product_names, geometry: ScanGeometry, *,
             )
             status = crossing_detector.last_status
             if crossing is not None:
-                event = event_processor.process(crossing)
+                event_processor.process(crossing)
                 status = event_processor.last_status
                 crossing_detector.set_track_event_status(crossing.track_id, status)
             if preview and not headless:

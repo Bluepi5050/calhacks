@@ -1,8 +1,6 @@
 """BLE wiring: backend-counted EventProcessor, count reset on a new session, make_transport('ble'), CLI choices.
 No Bluetooth: SmartCartBLE is replaced by a fake cart."""
-import io
 import unittest
-from contextlib import redirect_stdout
 from types import SimpleNamespace
 from unittest import mock
 

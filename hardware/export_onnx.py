@@ -26,7 +26,7 @@ def main():
     args = parser.parse_args()
     try:
         from ultralytics import YOLO
-    except ImportError as exc:
+    except ImportError:
         parser.error("Install Ultralytics first: pip install -r hardware/requirements.txt")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     exported = YOLO(args.weights).export(format="onnx", imgsz=640, batch=1,
