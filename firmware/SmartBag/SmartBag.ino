@@ -1,4 +1,4 @@
-// SmartBag firmware: ESP32 + BLE Nordic UART Service (Arduino IDE, ESP32 core 2.x or 3.x).
+// SmartBag firmware v3: ESP32 + BLE Nordic UART Service (Arduino IDE, ESP32 core 2.x or 3.x).
 // Open the Serial Monitor (115200 baud, "Newline") and type a SKU to drop it in the bag:
 //   1001            add one
 //   -1001           remove one
@@ -8,6 +8,9 @@
 // Pairing (v2): every bag advertises a unique name, SmartBag-XXXX (last two bytes of its MAC). When the phone
 // writes "HELLO", the light blinks three times and the bag answers "BAG <name> fw2" so the app can confirm
 // which bag is in your hand. Apps treat lines starting with "BAG " as control lines, never as items.
+// Walk-out signal (v3): "PAID <code>" = the trip was charged: one short blink (as before). "DUE <code>" = the trip
+// ended payment due (no card, nothing charged): three slow blinks, 600 ms on / 400 ms off, clearly different from
+// PAID and from the HELLO blinks. Any other line from the phone is ignored, so older apps and bags stay harmless.
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -21,6 +24,7 @@
 BLECharacteristic *txChar;
 bool connected = false;
 volatile bool helloRequested = false;
+volatile bool dueRequested = false;
 String bagName;
 
 class ServerCallbacks : public BLEServerCallbacks {
@@ -34,6 +38,7 @@ class RxCallbacks : public BLECharacteristicCallbacks {
     msg.trim();
     Serial.print("phone: "); Serial.println(msg);
     if (msg.startsWith("HELLO")) { helloRequested = true; return; }   // handled in loop(): never block the BLE callback
+    if (msg.startsWith("DUE ")) { dueRequested = true; return; }      // payment due: slow pattern, also in loop()
     if (msg.startsWith("OK") || msg.startsWith("PAID")) { digitalWrite(LED_PIN, HIGH); delay(120); digitalWrite(LED_PIN, LOW); }
   }
 };
@@ -73,7 +78,11 @@ void loop() {
   if (helloRequested) {
     helloRequested = false;
     for (int i = 0; i < 3; i++) { digitalWrite(LED_PIN, HIGH); delay(180); digitalWrite(LED_PIN, LOW); delay(180); }
-    sendLine("BAG " + bagName + " fw2");
+    sendLine("BAG " + bagName + " fw3");
+  }
+  if (dueRequested) {
+    dueRequested = false;
+    for (int i = 0; i < 3; i++) { digitalWrite(LED_PIN, HIGH); delay(600); digitalWrite(LED_PIN, LOW); delay(400); }
   }
   if (Serial.available()) {
     String line = Serial.readStringUntil('\n');
