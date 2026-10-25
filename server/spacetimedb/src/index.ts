@@ -11,7 +11,7 @@ import { sha256, googleJwt } from './push_crypto';
 // - Stores are multi-tenant: each has its own staff; global admins see everything.
 // - A scheduled job trims the bag feed and idle shoppers so tables don't grow without bound.
 
-const MAX_RADIUS_M = 400;          // keeps every store inside the 3x3 grid neighbourhood of a fix
+const MAX_RADIUS_M = 500;          // 500 m + 100 m max accuracy stays inside the 3x3 grid neighbourhood (one cell ≈ 880 m at SF latitude)
 const CELL = 100;                  // cells per degree (0.01°)
 const FEED_TTL_MICROS = 3_600_000_000n;        // bag feed kept for 1 hour
 const IDLE_SHOPPER_MICROS = 43_200_000_000n;   // shoppers with empty bags dropped after 12 hours
