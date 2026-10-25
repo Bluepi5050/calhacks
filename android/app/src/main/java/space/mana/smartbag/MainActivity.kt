@@ -95,6 +95,7 @@ class MainActivity : ComponentActivity() {
         override fun finishReceipt() = model.finishReceipt()
         override fun demoDrop() = model.demoDrop()
         override fun demoWalkOut() = model.demoWalkOut()
+        override fun demoEnterStore() = model.demoEnterStore()
 
         // Start watching right away, but leave Bluetooth alone when the pairing step is next (it owns the radio then).
         private fun afterSignIn(signUp: Boolean, done: (String?, AccountState?) -> Unit): (String?) -> Unit = { err ->

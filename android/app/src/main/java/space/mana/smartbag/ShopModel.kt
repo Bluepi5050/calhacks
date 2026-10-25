@@ -505,6 +505,7 @@ class ShopModel(private val app: Application) {
 
     private fun onFix(l: Location) {
         if (System.currentTimeMillis() < ignoreFixesUntil) return
+        if (holdStore != null) { fix = l; return }                 // demo: pinned in the store, real GPS doesn't count
         fix = l
         maybeRefreshGeofences(l)
         if (store is StoreState.NoLocation) store = StoreState.Locating
@@ -516,6 +517,7 @@ class ShopModel(private val app: Application) {
     }
 
     fun refreshStore() {
+        holdStore?.let { h -> ops.trySend { apply(Api.locate(h.lat, h.lng, 5f), true) }; return }
         val l = fix ?: return
         if (locating) return
         locating = true
@@ -559,12 +561,40 @@ class ShopModel(private val app: Application) {
      * the phone is, exactly what walking out produces, then pauses real GPS for a minute.
      */
     fun demoWalkOut() {
-        val l = fix ?: run { clog("walk out: no location yet, wait for a GPS fix"); return }
+        // From the pinned store's centre if "Stay in store" is on (and that ends it), else from the real fix.
+        val h = holdStore
+        holdStore = null
+        val (baseLat, baseLng) = h?.let { it.lat to it.lng }
+            ?: fix?.let { it.latitude to it.longitude }
+            ?: run { clog("walk out: no location yet, wait for a GPS fix"); return }
         ignoreFixesUntil = System.currentTimeMillis() + 60_000
-        val lat = l.latitude + 300.0 / 111_320.0
+        val lat = baseLat + 300.0 / 111_320.0
         // Pause between the two fixes so the "Leaving" beat is visible, as it would be on a real walk out the door.
-        ops.trySend { apply(Api.locate(lat, l.longitude, 8f), true); delay(1800) }
-        ops.trySend { apply(Api.locate(lat + 0.0002, l.longitude, 8f), true) }
+        ops.trySend { apply(Api.locate(lat, baseLng, 8f), true); delay(1800) }
+        ops.trySend { apply(Api.locate(lat + 0.0002, baseLng, 8f), true) }
+    }
+
+    /**
+     * Demo aid ("Stay in store"): indoor GPS drifts past the store's edge and reads as leaving. Pin the phone at the
+     * nearest store's centre, reported every 8 s like a real fix in a store, until Simulate walk out.
+     */
+    private var holdStore: NearbyStore? = null
+    var holdingInStore by mutableStateOf(false); private set
+    fun demoEnterStore() {
+        val l = fix
+        ops.trySend {
+            val s = try {
+                (if (l != null) Api.nearbyStores(l.latitude, l.longitude, 5) else Geofences.cached(app)).minByOrNull { it.distanceM }
+            } catch (e: Exception) { clog("stay in store: ${friendly(e)}"); null }
+            if (s == null) { clog("stay in store: no store nearby"); return@trySend }
+            clog("stay in store: pinned at ${s.name}")
+            holdStore = s; holdingInStore = true
+            apply(Api.locate(s.lat, s.lng, 5f), true)
+            scope.launch {
+                while (holdStore === s) { delay(8_000); if (holdStore === s) ops.trySend { apply(Api.locate(s.lat, s.lng, 5f), true) } }
+                holdingInStore = false
+            }
+        }
     }
 
 
