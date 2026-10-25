@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
+import subprocess
 import threading
 import time
 from typing import Callable, Dict, List, Optional
@@ -659,16 +661,34 @@ class SmartCartBLE:
 
         def power(on):
             try:
-                props.Set(ADAPTER, "Powered", dbus.Boolean(on))
+                props.Set(ADAPTER, "Powered", dbus.Boolean(on), timeout=5)
+                return True
             except dbus.exceptions.DBusException as e:
                 log.warning("could not power the adapter %s: %s", "on" if on else "off", _explain(e))
+                return False
 
         def back_on():
             if not self._stopping:
                 power(True)                        # the Powered signal refreshes the advertisement
             return False
-        power(False)
-        GLib.timeout_add(1500, back_on)
+        if power(False):
+            GLib.timeout_add(1500, back_on)
+        else:
+            self._restart_bluetoothd()             # the chip didn't even take "power off": only a restart clears it
+
+    def _restart_bluetoothd(self):
+        """Last resort when the controller is wedged (kernel log: "command 0x2039 tx timeout"). Restarting
+        bluetoothd re-initialises the controller; _on_bluez_owner then registers everything again."""
+        systemctl = shutil.which("systemctl")
+        if os.geteuid() != 0 or systemctl is None:
+            log.error("the Bluetooth controller is stuck: run sudo systemctl restart bluetooth")
+            return
+        log.warning("the Bluetooth controller is stuck: restarting bluetoothd")
+        try:
+            subprocess.Popen([systemctl, "restart", "bluetooth"], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as e:
+            log.error("could not restart bluetoothd (%s): run sudo systemctl restart bluetooth", e)
 
     def _on_adv_released(self):
         self.advertising = False
@@ -677,8 +697,12 @@ class SmartCartBLE:
             self._schedule_adv_retry(ADV_RETRY_S[0])
 
     def _readvertise(self, gen):
-        """Some controllers stop advertising after a connection; refresh it once the cart is free."""
+        """Advertise again once the cart is free, if our advertisement is gone. While it is still registered the
+        kernel resumes it after the disconnect by itself, and refreshing it anyway re-sends "LE Set Extended
+        Advertising Enable", the command the Jetson's Realtek chip sometimes never answers (wedging it)."""
         if gen != self._adv_gen or self._stopping or self._connected or self._connected_devices():
+            return False
+        if self.advertising:
             return False
         self._adv_gen += 1
         new_gen = self._adv_gen
