@@ -426,9 +426,14 @@ class ShopModel(private val app: Application) {
         val keep = pairing?.probe?.takeIf { it.connected && (it.bleName in link.allowed || it.bleName in cart.allowed) && physical is BagState.Connected }
         pairing = null
         link.stopPairScan(); cart.stopPairScan()
+        // A cart that finished connecting during pairing never got the protocol (onReady skips it while pairing): the
+        // one just checked, or ours reconnecting meanwhile. Ours: start it now (STATUS read → reconcile → START if in a
+        // store). Someone else's: drop it so connectAll() can look for ours.
+        if (!simulated && cart.ready) {
+            if (cart.name in cart.allowed) { if (!cartSync.connected) { cartSync.onConnected(); cart.readStatus() } }
+            else cart.disconnect()
+        }
         if (keep == null) connectAll()
-        // Kept the cart just paired: now it's ours, so start the protocol (STATUS read → reconcile → START if in a store).
-        else if (CartProtocol.isCartName(keep.bleName) && cart.ready) { cartSync.onConnected(); cart.readStatus() }
         updateBag()
     }
 

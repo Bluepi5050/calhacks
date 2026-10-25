@@ -44,6 +44,7 @@ class CartLink(
         val EVENTS: UUID = UUID.fromString(CartProtocol.EVENTS)
         val STATUS: UUID = UUID.fromString(CartProtocol.STATUS)
         val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+        const val HEARTBEAT_MS = 15_000L
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -62,8 +63,22 @@ class CartLink(
     @Volatile var allowed: Set<String> = emptySet()
 
     private val ops = GattQueue(::exec, log)
-    private val opTimeout = Runnable { fail("GATT ${ops.current} timed out") }
+    private val opTimeout = Runnable {
+        fail(if ((ops.current as? GattOp.Read)?.heartbeat == true) "cart stopped answering" else "GATT ${ops.current} timed out")
+    }
     private val ignored = mutableSetOf<String>()                // addresses that turned out to be someone else's cart
+
+    /**
+     * While connected and idle, read STATUS every [HEARTBEAT_MS]. A cart that vanished (reset, out of range) never
+     * answers, so the 5 s op timeout drops the link in seconds instead of waiting for Android to notice.
+     */
+    private val heartbeat = object : Runnable {
+        override fun run() {
+            if (gatt == null || !ready) return
+            if (ops.current == null && ops.size == 0) ops.add(GattOp.Read(CartProtocol.STATUS, heartbeat = true))
+            main.postDelayed(this, HEARTBEAT_MS)
+        }
+    }
 
     /**
      * Any GATT operation that times out, is refused, or reports failure breaks the link: close and reconnect. The
@@ -183,6 +198,7 @@ class CartLink(
 
     private fun close() {
         main.removeCallbacks(opTimeout)
+        main.removeCallbacks(heartbeat)
         ops.clear()
         val g = gatt
         gatt = null
@@ -233,6 +249,13 @@ class CartLink(
     }
 
     private fun opDone() { main.removeCallbacks(opTimeout); ops.done() }
+
+    /** A STATUS read finished: pass it on, unless it was only a [heartbeat]. */
+    private fun readDone(value: ByteArray) {
+        val beat = (ops.current as? GattOp.Read)?.heartbeat == true
+        opDone()
+        if (!beat) onStatus(String(value, Charsets.UTF_8))
+    }
 
     private val scanCb = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
@@ -309,16 +332,17 @@ class CartLink(
                     emit(BagState.Connected(name))
                     onReady()
                     readStatus()
+                    main.removeCallbacks(heartbeat); main.postDelayed(heartbeat, HEARTBEAT_MS)
                 }
             }
         }
         override fun onCharacteristicRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray, status: Int) {
-            main.post { if (g === gatt) { if (status != BluetoothGatt.GATT_SUCCESS) fail("STATUS read failed ($status)") else { opDone(); onStatus(String(value, Charsets.UTF_8)) } } }
+            main.post { if (g === gatt) { if (status != BluetoothGatt.GATT_SUCCESS) fail("STATUS read failed ($status)") else readDone(value) } }
         }
         @Deprecated("Below Android 13")
         override fun onCharacteristicRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
             val v = c.value?.copyOf() ?: ByteArray(0)
-            main.post { if (g === gatt) { if (status != BluetoothGatt.GATT_SUCCESS) fail("STATUS read failed ($status)") else { opDone(); onStatus(String(v, Charsets.UTF_8)) } } }
+            main.post { if (g === gatt) { if (status != BluetoothGatt.GATT_SUCCESS) fail("STATUS read failed ($status)") else readDone(v) } }
         }
         override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
             main.post { if (g === gatt) { if (status != BluetoothGatt.GATT_SUCCESS) fail("write failed ($status)") else opDone() } }
