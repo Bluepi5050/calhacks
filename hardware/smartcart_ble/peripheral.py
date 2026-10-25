@@ -63,6 +63,35 @@ def _ensure_glib_mainloop() -> None:
 
 from .peripheral_errors import SmartCartError  # noqa: E402  (re-exported)
 
+INSTANCE_LOCK = os.environ.get("SMARTCART_LOCK_FILE", "/run/lock/smartcart-ble.lock")
+
+
+def _acquire_instance_lock(path: str = INSTANCE_LOCK):
+    """One cart per machine. Two would both register the same service and advertisement, and a phone could
+    connect to the one whose program ignores it. Returns the open lock file (keep it open), or None where
+    file locks aren't available. Raises SmartCartError if another cart holds it."""
+    try:
+        import fcntl
+    except ImportError:                          # Windows: no BlueZ either, nothing to guard
+        return None
+    try:
+        f = open(path, "a+")
+    except OSError:
+        return None                              # can't create the lock (permissions): don't block the cart
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.seek(0)
+        holder = f.read().strip() or "?"
+        f.close()
+        raise SmartCartError("another SmartCart cart is already running on this machine (PID %s): stop it "
+                             "first, e.g. sudo pkill -INT -f 'fake_cart|main_tensorrt'" % holder) from None
+    f.seek(0)
+    f.truncate()
+    f.write(str(os.getpid()))
+    f.flush()
+    return f
+
 
 class _BluezError(dbus.exceptions.DBusException):
     _dbus_error_name = "org.bluez.Error.Failed"
@@ -245,7 +274,7 @@ class SmartCartBLE:
                  on_session_stop: Optional[Callable[[str, str], None]] = None,
                  strict: bool = False, object_path: str = "/org/smartcart",
                  state_file=_DEFAULT, disconnect_on_start: bool = True,
-                 clock: Callable[[], float] = time.monotonic):
+                 clock: Callable[[], float] = time.monotonic, single_instance: bool = True):
         if name is not None and not p.valid_device_name(name):
             raise ValueError(f"name must be 1-{p.MAX_DEVICE_NAME} printable chars without '|'")
         self._adapter_hint = adapter
@@ -260,6 +289,8 @@ class SmartCartBLE:
         self._strict = strict
         self._root = object_path.rstrip("/")
         self._clock = clock
+        self._single_instance = single_instance      # take INSTANCE_LOCK in start() (tests turn it off)
+        self._instance_lock = None
         # last seq per session id survives restarts (None: keep it in memory only)
         self._state_file = DEFAULT_STATE_FILE if state_file is _DEFAULT else state_file
         self._start_listeners: List[Callable[[str, str, bool], None]] = []
@@ -317,6 +348,7 @@ class SmartCartBLE:
         Advertising failures are retried in the background (see logs)."""
         if self._thread is not None:
             return self
+        self._instance_lock = _acquire_instance_lock() if self._single_instance else None
         _ensure_glib_mainloop()
         self._thread = threading.Thread(target=self._run, name="smartcart-ble", daemon=True)
         self._thread.start()
@@ -326,6 +358,7 @@ class SmartCartBLE:
             err = self._startup_error
             self._thread.join(2)
             self._thread = None
+            self._release_instance_lock()
             raise err
         return self
 
@@ -341,6 +374,12 @@ class SmartCartBLE:
         done.wait(timeout)
         self._thread.join(timeout)
         self._thread = None
+        self._release_instance_lock()
+
+    def _release_instance_lock(self):
+        lock, self._instance_lock = getattr(self, "_instance_lock", None), None
+        if lock is not None:
+            lock.close()
 
     def __enter__(self):
         return self.start()

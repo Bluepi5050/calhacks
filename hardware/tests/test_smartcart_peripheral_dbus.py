@@ -15,6 +15,9 @@ import time
 import unittest
 from pathlib import Path
 
+# The fake_cart subprocesses must not take (or wait on) the real one-cart-per-machine lock.
+os.environ.setdefault("SMARTCART_LOCK_FILE", os.path.join(tempfile.gettempdir(), "smartcart-ble-test.lock"))
+
 try:
     import dbus
     import dbusmock
@@ -305,7 +308,8 @@ class PeripheralOverMockBluez(dbusmock.DBusTestCase if HAVE_DBUS else unittest.T
             from smartcart_ble.peripheral import SmartCartBLE
         self.add_adapter()
         dev, dev_mock = self.connected_device()
-        cart = SmartCartBLE(disconnect_on_start=False, state_file=None, object_path="/org/smartcart_t")
+        cart = SmartCartBLE(disconnect_on_start=False, state_file=None, object_path="/org/smartcart_t",
+                            single_instance=False)
         cart.start()
         try:
             self.pump(lambda: cart.advertising, timeout=3)
