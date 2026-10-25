@@ -559,7 +559,7 @@ class ShopModel(private val app: Application) {
      * the phone is, exactly what walking out produces, then pauses real GPS for a minute.
      */
     fun demoWalkOut() {
-        val l = fix ?: return
+        val l = fix ?: run { clog("walk out: no location yet, wait for a GPS fix"); return }
         ignoreFixesUntil = System.currentTimeMillis() + 60_000
         val lat = l.latitude + 300.0 / 111_320.0
         // Pause between the two fixes so the "Leaving" beat is visible, as it would be on a real walk out the door.
