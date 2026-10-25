@@ -243,3 +243,7 @@ hardware/models/
 
 # Operating system
 .DS_Store
+
+# hardware/test_camera.py output
+camera_test.jpg
+.camera_test.jpg
