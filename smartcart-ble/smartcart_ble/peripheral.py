@@ -252,7 +252,7 @@ class SmartCartBLE:
         self._set_alias = set_alias
         self._stale_after = stale_after
         self._buffer_size = buffer_size
-        self._readvertise = readvertise_on_disconnect
+        self._readvertise_on_disconnect = readvertise_on_disconnect
         # contract v1.2: a cart (re)start must look like a disconnect to the phone
         self._disconnect_on_start = disconnect_on_start
         self._stale_links: set = set()
@@ -652,7 +652,7 @@ class SmartCartBLE:
             if self._session:
                 self._session.set_phone_present(bool(self._phones))
             free = not self._connected
-        if not connected and free and self._readvertise and self.gatt_registered:
+        if not connected and free and self._readvertise_on_disconnect and self.gatt_registered:
             gen = self._adv_gen
             GLib.timeout_add(READVERTISE_DELAY_MS, lambda: self._readvertise(gen))
 
