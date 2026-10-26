@@ -115,7 +115,7 @@ The session-scoped sequence makes IDs unique across events and sessions. Local b
 
 ### Bluetooth to the Bag It app (`--transport ble`)
 
-Implemented in `hardware/smartcart_ble/` against the shared contract `hardware/smartcart_ble/SMARTCART-BLE.md` (v1.2): the Jetson is a BLE peripheral advertising service `7ccd0001-d416-4afc-a97d-f7c98e1afca9` as `SmartCart-XXXX`; the phone starts a session when it enters a store and receives each accepted ADD/REMOVE as `seq|A or R|label|confidence`. Needs `bluez`, `python3-dbus`, `python3-gi` (in the Jetson Linux image) and root or the `bluetooth` group.
+Implemented in `hardware/smartcart_ble/` against the shared contract [`docs/SMARTCART-BLE.md`](../docs/SMARTCART-BLE.md) (v1.2): the Jetson is a BLE peripheral advertising service `7ccd0001-d416-4afc-a97d-f7c98e1afca9` as `SmartCart-XXXX`; the phone starts a session when it enters a store and receives each accepted ADD/REMOVE as `seq|A or R|label|confidence`. Needs `bluez`, `python3-dbus`, `python3-gi` (in the Jetson Linux image) and root or the `bluetooth` group.
 
 ```bash
 bash hardware/smartcart_ble/tools/check_adapter.sh               # adapter / BlueZ / permission check
@@ -144,7 +144,7 @@ On the Jetson, from `/home/scott170/calhacks`, compile the engine with the insta
 ```bash
 cd /home/scott170/calhacks
 /usr/src/tensorrt/bin/trtexec --onnx=hardware/models/yolov8n.onnx \
-  --saveEngine=hardware/models/yolov8n_fp16.engine --fp16 --shapes=images:1x3x640x640
+  --saveEngine=hardware/models/yolov8n_fp16.engine --fp16
 ```
 
 Then run the same crossing logic headless on the Logitech camera:

@@ -388,7 +388,8 @@ class ShopModel(private val app: Application) {
         pairing = (pairing ?: PairUi("scanning", emptyList(), System.currentTimeMillis())).copy(probe = Probe(b.address, b.bleName))
         if (CartProtocol.isCartName(b.bleName)) cart.connectTo(b.address, b.bleName) else link.connectTo(b.address, b.bleName)
         scope.launch {
-            delay(12_000)
+            // A cart may need a few quick reconnects (CartLink.firstAnswer), about 4.5 s each: give it room for them.
+            delay(if (CartProtocol.isCartName(b.bleName)) 30_000 else 12_000)
             val p = pairing?.probe
             if (p != null && p.address == b.address && !p.connected && p.error == null)
                 pairing = pairing?.copy(probe = p.copy(error = "Couldn't connect to ${bagDisplayName(b.bleName)}. Make sure it's on and close by."))
@@ -428,9 +429,14 @@ class ShopModel(private val app: Application) {
         val keep = pairing?.probe?.takeIf { it.connected && (it.bleName in link.allowed || it.bleName in cart.allowed) && physical is BagState.Connected }
         pairing = null
         link.stopPairScan(); cart.stopPairScan()
+        // A cart that finished connecting during pairing never got the protocol (onReady skips it while pairing): the
+        // one just checked, or ours reconnecting meanwhile. Ours: start it now (STATUS read → reconcile → START if in a
+        // store). Someone else's: drop it so connectAll() can look for ours.
+        if (!simulated && cart.ready) {
+            if (cart.name in cart.allowed) { if (!cartSync.connected) { cartSync.onConnected(); cart.readStatus() } }
+            else cart.disconnect()
+        }
         if (keep == null) connectAll()
-        // Kept the cart just paired: now it's ours, so start the protocol (STATUS read → reconcile → START if in a store).
-        else if (CartProtocol.isCartName(keep.bleName) && cart.ready) { cartSync.onConnected(); cart.readStatus() }
         updateBag()
     }
 
@@ -553,12 +559,18 @@ class ShopModel(private val app: Application) {
      * the phone is, exactly what walking out produces, then pauses real GPS for a minute.
      */
     fun demoWalkOut() {
-        val l = fix ?: return
+        val l = fix ?: run { clog("walk out: no location yet, wait for a GPS fix"); return }
         ignoreFixesUntil = System.currentTimeMillis() + 60_000
-        val lat = l.latitude + 300.0 / 111_320.0
-        // Pause between the two fixes so the "Leaving" beat is visible, as it would be on a real walk out the door.
-        ops.trySend { apply(Api.locate(lat, l.longitude, 8f), true); delay(1800) }
-        ops.trySend { apply(Api.locate(lat + 0.0002, l.longitude, 8f), true) }
+        ops.trySend {
+            // Far enough out for this store, whatever its radius: its edge plus the module's 40 m leaving margin, plus room.
+            val radius = try { Api.nearbyStores(l.latitude, l.longitude, 5).minByOrNull { it.distanceM }?.radiusM } catch (_: Exception) { null } ?: 0
+            val lat = l.latitude + maxOf(300, radius + 240) / 111_320.0
+            clog("walk out: reporting fixes ${maxOf(300, radius + 240)} m away (store radius $radius m)")
+            // Pause between the two fixes so the "Leaving" beat is visible, as it would be on a real walk out the door.
+            apply(Api.locate(lat, l.longitude, 8f), true)
+            delay(1800)
+            apply(Api.locate(lat + 0.0002, l.longitude, 8f), true)
+        }
     }
 
 

@@ -150,7 +150,7 @@ class CartSync(
         store.save(a.toString())
     }
 
-    private fun send(msg: String) { log("→ $msg"); if (connected) write(msg) }
+    private fun send(msg: String) { log("→ $msg"); if (connected) write(msg) else log("not sent (cart offline): $msg") }
 
     /** GATT is ready (MTU ok, notifications on). The driver reads STATUS next and passes it to [onStatus]. */
     fun onConnected() { connected = true; confirmed = null; pendingStart = null; cart = null; log("connected") }
@@ -272,7 +272,8 @@ sealed class GattOp {
     object Mtu : GattOp() { override fun toString() = "MTU" }
     object Discover : GattOp() { override fun toString() = "DISCOVER" }
     data class Notify(val char: String) : GattOp()
-    data class Read(val char: String) : GattOp()
+    /** [heartbeat]: a liveness read from [CartLink]; its value isn't passed on as STATUS. */
+    data class Read(val char: String, val heartbeat: Boolean = false) : GattOp()
     data class Write(val text: String) : GattOp()
 }
 

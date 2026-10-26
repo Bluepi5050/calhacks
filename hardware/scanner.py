@@ -32,6 +32,13 @@ def open_capture(source):
             return capture
         capture.release()
 
+    # Linux: go straight to V4L2 for cameras; the default tries GStreamer first, which fails on /dev/video* paths.
+    if sys.platform.startswith("linux") and (isinstance(source, int) or str(source).startswith("/dev/video")):
+        capture = cv2.VideoCapture(source, cv2.CAP_V4L2)
+        if capture.isOpened():
+            return capture
+        capture.release()
+
     capture = cv2.VideoCapture(source)
     if not capture.isOpened():
         capture.release()
@@ -57,8 +64,10 @@ def configure_capture(capture, *, width=1280, height=720, fps=30, is_camera=True
             print("Keeping the webcam's native capture mode; measured CAM FPS "
                   "appears in the preview.", flush=True)
         else:
-            if sys.platform == "win32":
-                # Compressed USB frames can help modes that exceed the native bandwidth.
+            # Compressed USB frames can help modes that exceed the native bandwidth. Linux USB webcams default to
+            # YUYV, which caps 1280x720 at about 10 FPS; MJPG reaches 30. Set it before the size: V4L2 picks the
+            # frame sizes and rates from the current pixel format.
+            if sys.platform == "win32" or sys.platform.startswith("linux"):
                 try:
                     capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
                 except cv2.error:
@@ -98,6 +107,13 @@ def configure_capture(capture, *, width=1280, height=720, fps=30, is_camera=True
             actual_width, actual_height, fps_text, codec or "unknown", backend,
             width, height, fps), flush=True)
     return actual_width, actual_height
+
+
+def add_transport_argument(parser):
+    parser.add_argument("--transport", choices=("both", "console", "mock", "ble", "ble+console"),
+                        default="both",
+                        help="ble / ble+console: send events to the Bag It app over Bluetooth "
+                             "(see hardware/smartcart_ble/README.md)")
 
 
 def make_transport(mode="both"):

@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
+import subprocess
 import threading
 import time
 from typing import Callable, Dict, List, Optional
@@ -26,7 +28,7 @@ from dbus.mainloop.glib import DBusGMainLoop
 from gi.repository import GLib
 
 from . import protocol as p
-from .session import EVENTS, STATUS, BUFFER_SIZE, STALE_AFTER_S, CartSession, Effects, Notice, SeqMemory
+from .session import EVENTS, BUFFER_SIZE, STALE_AFTER_S, CartSession, Effects, Notice, SeqMemory
 
 log = logging.getLogger("smartcart_ble")
 
@@ -43,6 +45,8 @@ ADVERTISEMENT = "org.bluez.LEAdvertisement1"
 
 TICK_S = 5
 ADV_RETRY_S = (5, 10, 20, 30)          # backoff while advertising keeps failing
+ADAPTER_RESET_MIN_S = 60                # at most one adapter power cycle per minute (advertising stuck)
+ADV_REPLY_TIMEOUT_S = 6                 # RegisterAdvertisement normally answers in ms; silence = the chip lost a reply
 READVERTISE_DELAY_MS = 1500
 DEFAULT_STATE_FILE = os.environ.get("SMARTCART_STATE_FILE") or os.path.expanduser(
     "~/.local/state/smartcart-ble/sessions.json")
@@ -61,6 +65,35 @@ def _ensure_glib_mainloop() -> None:
 
 
 from .peripheral_errors import SmartCartError  # noqa: E402  (re-exported)
+
+INSTANCE_LOCK = os.environ.get("SMARTCART_LOCK_FILE", "/run/lock/smartcart-ble.lock")
+
+
+def _acquire_instance_lock(path: str = INSTANCE_LOCK):
+    """One cart per machine. Two would both register the same service and advertisement, and a phone could
+    connect to the one whose program ignores it. Returns the open lock file (keep it open), or None where
+    file locks aren't available. Raises SmartCartError if another cart holds it."""
+    try:
+        import fcntl
+    except ImportError:                          # Windows: no BlueZ either, nothing to guard
+        return None
+    try:
+        f = open(path, "a+")
+    except OSError:
+        return None                              # can't create the lock (permissions): don't block the cart
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.seek(0)
+        holder = f.read().strip() or "?"
+        f.close()
+        raise SmartCartError("another SmartCart cart is already running on this machine (PID %s): stop it "
+                             "first, e.g. sudo pkill -INT -f 'fake_cart|main_tensorrt'" % holder) from None
+    f.seek(0)
+    f.truncate()
+    f.write(str(os.getpid()))
+    f.flush()
+    return f
 
 
 class _BluezError(dbus.exceptions.DBusException):
@@ -244,7 +277,7 @@ class SmartCartBLE:
                  on_session_stop: Optional[Callable[[str, str], None]] = None,
                  strict: bool = False, object_path: str = "/org/smartcart",
                  state_file=_DEFAULT, disconnect_on_start: bool = True,
-                 clock: Callable[[], float] = time.monotonic):
+                 clock: Callable[[], float] = time.monotonic, single_instance: bool = True):
         if name is not None and not p.valid_device_name(name):
             raise ValueError(f"name must be 1-{p.MAX_DEVICE_NAME} printable chars without '|'")
         self._adapter_hint = adapter
@@ -252,13 +285,15 @@ class SmartCartBLE:
         self._set_alias = set_alias
         self._stale_after = stale_after
         self._buffer_size = buffer_size
-        self._readvertise = readvertise_on_disconnect
+        self._readvertise_on_disconnect = readvertise_on_disconnect
         # contract v1.2: a cart (re)start must look like a disconnect to the phone
         self._disconnect_on_start = disconnect_on_start
         self._stale_links: set = set()
         self._strict = strict
         self._root = object_path.rstrip("/")
         self._clock = clock
+        self._single_instance = single_instance      # take INSTANCE_LOCK in start() (tests turn it off)
+        self._instance_lock = None
         # last seq per session id survives restarts (None: keep it in memory only)
         self._state_file = DEFAULT_STATE_FILE if state_file is _DEFAULT else state_file
         self._start_listeners: List[Callable[[str, str, bool], None]] = []
@@ -288,6 +323,8 @@ class SmartCartBLE:
         self.gatt_registered = False
         self.advertising = False
         self._adv_attempt = 0
+        self._adv_retry = None                     # GLib source id of the one pending advertising retry
+        self._last_adapter_reset = None            # clock() of the last power cycle (see _reset_adapter)
         self._adv_gen = 0
         self._bluez_owner = None
 
@@ -314,6 +351,7 @@ class SmartCartBLE:
         Advertising failures are retried in the background (see logs)."""
         if self._thread is not None:
             return self
+        self._instance_lock = _acquire_instance_lock() if self._single_instance else None
         _ensure_glib_mainloop()
         self._thread = threading.Thread(target=self._run, name="smartcart-ble", daemon=True)
         self._thread.start()
@@ -323,6 +361,7 @@ class SmartCartBLE:
             err = self._startup_error
             self._thread.join(2)
             self._thread = None
+            self._release_instance_lock()
             raise err
         return self
 
@@ -338,6 +377,12 @@ class SmartCartBLE:
         done.wait(timeout)
         self._thread.join(timeout)
         self._thread = None
+        self._release_instance_lock()
+
+    def _release_instance_lock(self):
+        lock, self._instance_lock = getattr(self, "_instance_lock", None), None
+        if lock is not None:
+            lock.close()
 
     def __enter__(self):
         return self.start()
@@ -538,14 +583,31 @@ class SmartCartBLE:
             except dbus.exceptions.DBusException as exc:
                 log.warning("could not disconnect %s: %s", path, _explain(exc))
 
+    def _schedule_adv_retry(self, delay):
+        """At most one advertising retry is pending: a failed register and BlueZ's Release of the same
+        advertisement both ask for one, and each retry chain would otherwise fork on every failure."""
+        self._cancel_adv_retry()
+        self._adv_retry = GLib.timeout_add_seconds(delay, self._adv_retry_due)
+
+    def _cancel_adv_retry(self):
+        if self._adv_retry is not None:
+            GLib.source_remove(self._adv_retry)
+            self._adv_retry = None
+
+    def _adv_retry_due(self):
+        self._adv_retry = None
+        return self._register_adv()
+
     def _register_adv(self):
+        self._cancel_adv_retry()
         if self._stopping or self._bus is None:
             return False
         gen = self._adv_gen
         mgr = dbus.Interface(self._bus.get_object(BLUEZ, self.adapter_path), ADV_MANAGER)
         mgr.RegisterAdvertisement(dbus.ObjectPath(self._adv.path), _NO_OPTIONS,
                                   reply_handler=lambda: self._on_adv_registered(gen),
-                                  error_handler=lambda e: self._on_adv_error(gen, e))
+                                  error_handler=lambda e: self._on_adv_error(gen, e),
+                                  timeout=ADV_REPLY_TIMEOUT_S)
         return False
 
     def _on_adv_registered(self, gen):
@@ -553,6 +615,7 @@ class SmartCartBLE:
             return
         self.advertising = True
         self._adv_attempt = 0
+        self._cancel_adv_retry()
         log.info("advertising %s (service UUID%s)", self.name,
                  {0: " + local name", 1: " + adapter name", 2: " only"}[self._adv.variant])
 
@@ -569,19 +632,77 @@ class SmartCartBLE:
             log.warning("advertisement too long, retrying as '%s'", _Advertisement.VARIANTS[self._adv.variant])
             self._register_adv()
             return
+        # Some controllers can't advertise while a phone is connected. Only one phone uses the cart, so wait:
+        # the disconnect handler advertises again.
+        if self._connected_devices():
+            log.info("advertising paused while a phone is connected; it resumes when the phone disconnects")
+            return
+        # Second failure in a row with nothing connected: usually the kernel answers "Busy" (a scan or another
+        # advertiser left the controller mid-operation). A power cycle clears it; at most once a minute.
+        # No reply at all: the controller lost a command's answer and the kernel waits for it forever.
+        stuck = name == "org.freedesktop.DBus.Error.NoReply"
+        if (self._adv_attempt >= 1 or stuck) and (self._last_adapter_reset is None
+                                       or self._clock() - self._last_adapter_reset >= ADAPTER_RESET_MIN_S):
+            self._reset_adapter(exc)
+            return
         delay = ADV_RETRY_S[min(self._adv_attempt, len(ADV_RETRY_S) - 1)]
         self._adv_attempt += 1
         log.error("advertising failed (%s); retrying in %d s", _explain(exc), delay)
-        GLib.timeout_add_seconds(delay, self._register_adv)
+        self._schedule_adv_retry(delay)
+
+    def _reset_adapter(self, exc):
+        """Power the adapter off and on, then advertise again. BlueZ keeps our GATT app and advertisement
+        registered across it; only links (none, checked by the caller) and other clients' scans are dropped."""
+        self._last_adapter_reset = self._clock()
+        self._adv_attempt += 1
+        log.warning("advertising keeps failing (%s) with no phone connected: turning the Bluetooth adapter "
+                    "off and on to clear it", _explain(exc))
+        props = dbus.Interface(self._bus.get_object(BLUEZ, self.adapter_path), PROPS)
+
+        def power(on):
+            try:
+                props.Set(ADAPTER, "Powered", dbus.Boolean(on), timeout=5)
+                return True
+            except dbus.exceptions.DBusException as e:
+                log.warning("could not power the adapter %s: %s", "on" if on else "off", _explain(e))
+                return False
+
+        def back_on():
+            if not self._stopping:
+                power(True)                        # the Powered signal refreshes the advertisement
+            return False
+        if power(False):
+            GLib.timeout_add(1500, back_on)
+        else:
+            self._restart_bluetoothd()             # the chip didn't even take "power off": only a restart clears it
+
+    def _restart_bluetoothd(self):
+        """Last resort when the controller is wedged (kernel log: "command 0x2039 tx timeout"). Restarting
+        bluetoothd re-initialises the controller; _on_bluez_owner then registers everything again."""
+        systemctl = shutil.which("systemctl")
+        if os.geteuid() != 0 or systemctl is None:
+            log.error("the Bluetooth controller is stuck: run sudo systemctl restart bluetooth")
+            return
+        log.warning("the Bluetooth controller is stuck: restarting bluetoothd")
+        try:
+            subprocess.Popen([systemctl, "restart", "bluetooth"], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as e:
+            log.error("could not restart bluetoothd (%s): run sudo systemctl restart bluetooth", e)
 
     def _on_adv_released(self):
         self.advertising = False
-        if not self._stopping:
-            GLib.timeout_add_seconds(ADV_RETRY_S[0], self._register_adv)
+        # BlueZ also releases an advertisement it failed to add; the error handler's backoff retry covers that.
+        if not self._stopping and self._adv_retry is None:
+            self._schedule_adv_retry(ADV_RETRY_S[0])
 
     def _readvertise(self, gen):
-        """Some controllers stop advertising after a connection; refresh it once the cart is free."""
-        if gen != self._adv_gen or self._stopping or self._connected:
+        """Advertise again once the cart is free, if our advertisement is gone. While it is still registered the
+        kernel resumes it after the disconnect by itself, and refreshing it anyway re-sends "LE Set Extended
+        Advertising Enable", the command the Jetson's Realtek chip sometimes never answers (wedging it)."""
+        if gen != self._adv_gen or self._stopping or self._connected or self._connected_devices():
+            return False
+        if self.advertising:
             return False
         self._adv_gen += 1
         new_gen = self._adv_gen
@@ -621,6 +742,14 @@ class SmartCartBLE:
                                       signal_name="PropertiesChanged", arg0=DEVICE, path_keyword="path")
         self._bus.add_signal_receiver(self._on_ifaces_removed, dbus_interface=OBJ_MANAGER,
                                       signal_name="InterfacesRemoved")
+        # Adapter powered back on (btmgmt power, rfkill, our own _reset_adapter): BlueZ drops advertisements
+        # while it is off and doesn't add them back, so advertise again.
+        self._bus.add_signal_receiver(self._on_adapter_props, dbus_interface=PROPS,
+                                      signal_name="PropertiesChanged", arg0=ADAPTER, path_keyword="path")
+        # A phone BlueZ hasn't seen before (Android rotates its address) appears already connected, with no
+        # PropertiesChanged: without this it never counts as connected.
+        self._bus.add_signal_receiver(self._on_ifaces_added, dbus_interface=OBJ_MANAGER,
+                                      signal_name="InterfacesAdded")
 
     def _is_ours(self, path) -> bool:
         return bool(self.adapter_path) and str(path).startswith(self.adapter_path + "/")
@@ -629,6 +758,35 @@ class SmartCartBLE:
         if interface != DEVICE or not self._is_ours(path) or "Connected" not in changed:
             return
         self._set_connected(str(path), bool(changed["Connected"]))
+
+    def _on_adapter_props(self, interface, changed, invalidated, path=None):
+        if interface != ADAPTER or str(path) != self.adapter_path or "Powered" not in changed:
+            return
+        if not bool(changed["Powered"]):
+            self.advertising = False
+        elif not self._stopping and self.gatt_registered:
+            log.info("adapter powered on again: advertising again")
+            GLib.timeout_add(1000, self._refresh_adv)
+
+    def _refresh_adv(self):
+        """Unregister (BlueZ may still list ours although the controller dropped it), then register again."""
+        if self._stopping or self._bus is None:
+            return False
+        self._cancel_adv_retry()
+        self._adv_gen += 1                         # answers to requests sent before this are stale
+        gen = self._adv_gen
+        mgr = dbus.Interface(self._bus.get_object(BLUEZ, self.adapter_path), ADV_MANAGER)
+
+        def again(*_):
+            if gen == self._adv_gen:
+                self._register_adv()
+        mgr.UnregisterAdvertisement(dbus.ObjectPath(self._adv.path), reply_handler=again, error_handler=again)
+        return False
+
+    def _on_ifaces_added(self, path, interfaces):
+        dev = interfaces.get(DEVICE)
+        if dev is not None and self._is_ours(path) and bool(dev.get("Connected", False)):
+            self._set_connected(str(path), True)
 
     def _on_ifaces_removed(self, path, interfaces):
         if DEVICE in interfaces and self._is_ours(path):
@@ -652,7 +810,7 @@ class SmartCartBLE:
             if self._session:
                 self._session.set_phone_present(bool(self._phones))
             free = not self._connected
-        if not connected and free and self._readvertise and self.gatt_registered:
+        if not connected and free and (self._readvertise_on_disconnect or not self.advertising) and self.gatt_registered:
             gen = self._adv_gen
             GLib.timeout_add(READVERTISE_DELAY_MS, lambda: self._readvertise(gen))
 
@@ -738,17 +896,28 @@ class SmartCartBLE:
 
     def _shutdown(self, done: threading.Event):
         self._stopping = True
+        self._cancel_adv_retry()
         with self._lock:
             if self._session:
                 self._session.stopping = True
                 self._queue(self._session.stop_local("local"))
         self._flush()
-        pending = {"n": 2}
+        # The link belongs to bluetoothd, not to us: without this the phone stays connected to a cart that is
+        # gone and keeps showing it as connected. Ask BlueZ itself, since _connected can miss new devices.
+        links = self._connected_devices()
+        pending = {"n": 2 + len(links)}
 
         def finish(*_):
             pending["n"] -= 1
             if pending["n"] <= 0:
                 self._teardown(done)
+        for path in links:
+            log.info("disconnecting %s (cart stopping)", path)
+            try:
+                dbus.Interface(self._bus.get_object(BLUEZ, path), DEVICE).Disconnect(
+                    reply_handler=finish, error_handler=finish)
+            except dbus.exceptions.DBusException:
+                finish()
         try:
             adapter_obj = self._bus.get_object(BLUEZ, self.adapter_path)
             dbus.Interface(adapter_obj, ADV_MANAGER).UnregisterAdvertisement(
@@ -760,6 +929,15 @@ class SmartCartBLE:
             return False
         GLib.timeout_add(2000, lambda: (self._teardown(done), False)[1])
         return False
+
+    def _connected_devices(self):
+        """Device1 paths on our adapter that BlueZ reports as connected right now."""
+        try:
+            objs = dbus.Interface(self._bus.get_object(BLUEZ, "/"), OBJ_MANAGER).GetManagedObjects(timeout=2)
+        except dbus.exceptions.DBusException:
+            return sorted(self._connected)
+        return sorted(str(p) for p, ifaces in objs.items()
+                      if DEVICE in ifaces and self._is_ours(p) and bool(ifaces[DEVICE].get("Connected", False)))
 
     def _teardown(self, done: threading.Event):
         if done.is_set():

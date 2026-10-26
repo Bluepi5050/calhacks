@@ -2,10 +2,11 @@
 
 import argparse
 import sys
-from pathlib import Path
 
-from .product_config import DEFAULT_PRODUCTS_CONFIG, load_products, resolve_products_config
-from .scan_geometry import DEFAULT_GEOMETRY_PATH, ScanGeometry
+from .cli import add_scanner_arguments, finish_scanner_arguments
+from .coco import COCO_NAMES
+from .http_preview import HttpPreview
+from .product_config import load_products
 from .scanner import run_scanner
 from .tensorrt_detector import TensorRTDetector
 
@@ -14,39 +15,21 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", default="/dev/video0", help="camera index or device path")
     parser.add_argument("--engine", default="hardware/models/yolov8n_fp16.engine")
-    parser.add_argument("--confidence", type=float, default=None,
-                        help="detection confidence (default from scan_geometry.json)")
-    parser.add_argument("--products-config", type=Path, default=DEFAULT_PRODUCTS_CONFIG)
-    parser.add_argument("--geometry-config", type=Path, default=DEFAULT_GEOMETRY_PATH)
-    parser.add_argument("--preview", action="store_true")
-    parser.add_argument("--tracking-debug", action="store_true",
-                        help="log track recovery and crossing decisions")
-    parser.add_argument("--transport", choices=("both", "console", "mock", "ble", "ble+console"),
-                        default="both",
-                        help="ble / ble+console: send events to the Bag It app over Bluetooth "
-                             "(see hardware/smartcart_ble/README.md)")
-    args = parser.parse_args(argv)
-    if args.confidence is not None and not 0 <= args.confidence <= 1:
-        parser.error("--confidence must be between 0 and 1")
+    add_scanner_arguments(parser)
+    args = finish_scanner_arguments(parser, parser.parse_args(argv))
     try:
-        geometry = ScanGeometry.from_file(args.geometry_config)
-    except ValueError as exc:
-        parser.error(str(exc))
-    if args.confidence is None:
-        args.confidence = geometry.confidence_threshold
-    products_config = resolve_products_config(args.products_config)
-    names = {index: name for index, name in enumerate(TensorRTDetector.COCO_NAMES)}
-    try:
-        products, _ = load_products(products_config, names)
+        products, _ = load_products(args.products_config, dict(enumerate(COCO_NAMES)))
     except ValueError as exc:
         parser.error(str(exc))
 
-    detector = None
+    detector = publisher = None
     try:
         detector = TensorRTDetector(args.engine, confidence=args.confidence)
-        run_scanner(detector, args.source, products, geometry,
+        if args.http_port is not None:
+            publisher = HttpPreview(args.http_host, args.http_port).start()     # prints its address
+        run_scanner(detector, args.source, products, args.geometry,
                     preview=args.preview, headless=not args.preview,
-                    transport_mode=args.transport,
+                    transport_mode=args.transport, frame_publisher=publisher,
                     tracking_debug=args.tracking_debug)
         return 0
     except KeyboardInterrupt:
@@ -55,6 +38,8 @@ def main(argv=None):
         print("SmartCart TensorRT scanner error: {}".format(exc), file=sys.stderr)
         return 1
     finally:
+        if publisher is not None:
+            publisher.close()
         if detector is not None:
             detector.close()
 

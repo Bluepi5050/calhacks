@@ -668,6 +668,11 @@ private fun StoreBlock(s: ShopUi, a: ShopActions) {
                 Txt(st.name, Type.title, bold = true, modifier = Modifier.semantics { heading() }
                     .pointerInput(Unit) { detectTapGestures(onLongPress = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); a.demoWalkOut() }) })
                 if (st.address.isNotBlank()) Txt(st.address, Type.caption, p.muted)
+                // Demo: walking out without leaving the room (the same as long-pressing the store name).
+                if (!st.leaving) {
+                    Spacer(Modifier.height(12.dp))
+                    SmallPill("Simulate walk out", "Simulate walking out of the store: pays for this trip") { a.demoWalkOut() }
+                }
             }
         }
     }
